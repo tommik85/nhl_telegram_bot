@@ -9,8 +9,9 @@ CHAT_ID = os.getenv("CHAT_ID")
 feeds = [
 "https://www.iltalehti.fi/rss/nhl.xml",
 "https://www.is.fi/rss/nhl.xml",
-"https://www.tsn.ca/rss/nhl",
-"https://www.sportsnet.ca/hockey/nhl/feed/"
+"https://www.nhl.com/rss/news.xml",
+"https://www.tsn.ca/nhl/rss.xml",
+"https://www.sportsnet.ca/feed/nhl/"
 ]
 
 seen=set()
