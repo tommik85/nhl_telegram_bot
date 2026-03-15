@@ -3,8 +3,8 @@ import requests
 import time
 import os
 
-TOKEN = os.getenv("8771208535:AAHFueJ0szulZWaZwz7MikY30LdSxNp9v1Q")
-CHAT_ID = os.getenv("8397011743")
+TOKEN = os.getenv("TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 feeds = [
 "https://www.iltalehti.fi/rss/nhl.xml",
