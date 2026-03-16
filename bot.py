@@ -171,7 +171,9 @@ def nhl_player_stats():
             "g": p.get("goals", 0),
             "a": p.get("assists", 0),
             "p": p.get("points", 0),
-            
+            "pm": p.get("plusMinus", 0),
+            "pim": p.get("penaltyMinutes", 0),
+            "toi": p.get("timeOnIcePerGame", "")
         })
 
     return players
@@ -695,19 +697,15 @@ def handle_command(text, chat_id):
             return
 
         lines = ["🏒 NHL TOP30 pistemiehet\n"]
-        lines.append("Nimi | GP G A P +/- PIM TOI\n")
 
         for i, p in enumerate(players, 1):
 
             lines.append(
                 f"{i}. {p['name']} ({p['team']}) "
-                f"{p['gp']} {p['g']} {p['a']} {p['p']} "
-                f"{p['pm']} {p['pim']} {p['toi']}"
+                f"{p['gp']} {p['g']}+{p['a']}={p['p']}"
             )
 
         send_telegram("\n".join(lines), chat_id)
-        return
-
 
     # /suomipisteet
     if c == "/suomipisteet":
