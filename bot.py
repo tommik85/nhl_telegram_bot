@@ -133,23 +133,40 @@ def normalize_url(url: str) -> str:
         
 def nhl_player_stats():
 
-    url = "https://api-web.nhle.com/v1/skater-stats-leaders/current"
-    r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+    now = now_local()
+    yr = now.year
+
+    # NHL season logic
+    if now.month < 7:
+        season = f"{yr-1}{yr}"
+    else:
+        season = f"{yr}{yr+1}"
+
+    url = "https://api.nhle.com/stats/rest/en/skater/summary"
+
+    params = {
+        "isAggregate": "false",
+        "isGame": "false",
+        "sort": "[{\"property\":\"points\",\"direction\":\"DESC\"}]",
+        "start": 0,
+        "limit": 30,
+        "cayenneExp": f"seasonId={season} and gameTypeId=2"
+    }
+
+    r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
 
-    data = r.json()
+    data = r.json().get("data", [])
 
     players = []
 
-    for p in data.get("points", []):
+    for p in data:
 
-        first = p.get("firstName", {}).get("default", "")
-        last = p.get("lastName", {}).get("default", "")
-        name = f"{first} {last}".strip()
+        name = f"{p.get('skaterFullName','')}".strip()
 
         players.append({
             "name": name,
-            "team": p.get("teamAbbrev", ""),
+            "team": p.get("teamAbbrevs", ""),
             "gp": p.get("gamesPlayed", 0),
             "g": p.get("goals", 0),
             "a": p.get("assists", 0),
@@ -670,29 +687,28 @@ def handle_command(text, chat_id):
         send_telegram("\n".join(lines), chat_id)
         return
 
-
     # /top30
     if c == "/top30":
 
-        players = nhl_player_stats()
+    players = nhl_player_stats()
 
-        if not players:
-            send_telegram("Tilastoja ei saatu.", chat_id)
-            return
-
-        lines = ["🏒 NHL TOP30 pistemiehet\n"]
-        lines.append("Nimi | GP G A P +/- PIM TOI")
-
-        for i, p in enumerate(players[:30], 1):
-
-            lines.append(
-                f"{i}. {p['name']} ({p['team']}) "
-                f"{p['gp']} {p['g']} {p['a']} {p['p']} "
-                f"{p['pm']} {p['pim']} {p['toi']}"
-            )
-
-        send_telegram("\n".join(lines), chat_id)
+    if not players:
+        send_telegram("Tilastoja ei saatu.", chat_id)
         return
+
+    lines = ["🏒 NHL TOP30 pistemiehet\n"]
+    lines.append("Nimi | GP G A P +/- PIM TOI\n")
+
+    for i, p in enumerate(players, 1):
+
+        lines.append(
+            f"{i}. {p['name']} ({p['team']}) "
+            f"{p['gp']} {p['g']} {p['a']} {p['p']} "
+            f"{p['pm']} {p['pim']} {p['toi']}"
+        )
+
+    send_telegram("\n".join(lines), chat_id)
+    return
 
 
     # /suomipisteet
