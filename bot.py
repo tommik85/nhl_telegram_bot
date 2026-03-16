@@ -752,26 +752,47 @@ def handle_command(text, chat_id):
         return
 
     # /suomipisteet
-    if c == "/suomipisteet":
+if c == "/suomipisteet":
 
-        players = nhl_finnish_stats()
+    now = now_local()
+    yr = now.year
 
-        if not players:
-            send_telegram("Suomalaistilastoja ei löytynyt.", chat_id)
-            return
+    if now.month < 7:
+        season = f"{yr-1}{yr}"
+    else:
+        season = f"{yr}{yr+1}"
 
-        lines = ["🇫🇮 Suomalaisten NHL pistepörssi\n"]
+    url = "https://api.nhle.com/stats/rest/en/skater/summary"
 
-        for i, p in enumerate(players, 1):
+    params = {
+        "isAggregate": "false",
+        "isGame": "false",
+        "sort": "[{\"property\":\"points\",\"direction\":\"DESC\"}]",
+        "start": 0,
+        "limit": 200,
+        "cayenneExp": f"seasonId={season} and gameTypeId=2 and nationality='FIN'"
+    }
 
-            lines.append(
-                f"{i}. {p['name']} ({p['team']}) "
-                f"{p['gp']} {p['g']}+{p['a']}={p['p']}"
-            )
+    r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
+    r.raise_for_status()
 
-        send_telegram("\n".join(lines), chat_id)
+    data = r.json().get("data", [])
+
+    if not data:
+        send_telegram("Suomalaistilastoja ei löytynyt.", chat_id)
         return
-    
+
+    lines = ["🇫🇮 Suomalaisten NHL pistepörssi\n"]
+
+    for i, p in enumerate(data, 1):
+        lines.append(
+            f"{i}. {p.get('skaterFullName','')} ({p.get('teamAbbrevs','')}) "
+            f"{p.get('gamesPlayed',0)} {p.get('goals',0)}+{p.get('assists',0)}={p.get('points',0)}"
+        )
+
+    send_telegram("\n".join(lines), chat_id)
+    return
+      
     
 
     # unknown command
