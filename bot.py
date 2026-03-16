@@ -26,17 +26,9 @@ DB_PATH = os.getenv("DB_PATH", "nhlbot.db")
 ENABLE_COMMANDS = os.getenv("ENABLE_COMMANDS", "true").lower() in ("1", "true", "yes")
 
 UPDATES_POLL_SECONDS = 2
-MAX_HOURS = 48
 HTTP_TIMEOUT = 20
 
-# 08:00 Finnish morning report
-NIGHTLY_STATS_HOUR = 8
-NIGHTLY_STATS_MINUTE = 0
-
-# 00–17:59 = previous day, 18–23:59 = current day
-FINNISH_DAY_BOUNDARY_HOUR = 18
-
-# Twitter handles (A-version)
+# Twitter A‑versio (ei API-avainta)
 TWITTER_USERS = [
     "FriedgeHNIC",
     "reporterchris",
@@ -63,7 +55,7 @@ RSS_FEEDS = [
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # ---------------------------------------------------------------------------
-# HTTP SESSION (RETRY) — Railway Free -friendly
+# HTTP SESSION WITH RETRY
 # ---------------------------------------------------------------------------
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -76,9 +68,9 @@ def make_session():
         status_forcelist=[429, 500, 502, 503, 504],
         allowed_methods=["GET"],
     )
-    ad = HTTPAdapter(max_retries=retries)
-    s.mount("http://", ad)
-    s.mount("https://", ad)
+    adapter = HTTPAdapter(max_retries=retries)
+    s.mount("http://", adapter)
+    s.mount("https://", adapter)
     return s
 
 SESSION = make_session()
@@ -118,8 +110,8 @@ def mark_seen(url: str):
 
 def get_setting(key: str):
     with db_conn() as c:
-        r = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-        return r[0] if r else None
+        row = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
 
 def set_setting(key: str, value: str):
     with db_conn() as c:
@@ -145,22 +137,11 @@ def normalize_url(url: str) -> str:
     except:
         return url
 
-def is_recent(date_str: str, hours=48):
-    if not date_str:
-        return False
-    try:
-        dt = dateparser.parse(date_str)
-        if not dt.tzinfo:
-            dt = pytz.timezone(TIMEZONE).localize(dt)
-        return (now_local() - dt).total_seconds() <= hours * 3600
-    except:
-        return False
-
 def send_telegram(msg: str, chat_id=None):
     if not chat_id:
         chat_id = CHAT_ID
     if not TOKEN or not chat_id:
-        logging.warning("TOKEN/CHAT_ID missing")
+        logging.warning("Missing TOKEN/CHAT_ID")
         return
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -169,9 +150,12 @@ def send_telegram(msg: str, chat_id=None):
         logging.warning(f"Telegram error: {e}")
 
 def nhl_effective_date():
-    """00–17:59 = yesterday; 18–23:59 = today."""
+    """
+    NHL effective date (Suomensääntö):
+    Aamuun 17:59 asti katsotaan eilinen, klo 18 jälkeen nykyinen päivä.
+    """
     local = now_local()
-    if local.hour < FINNISH_DAY_BOUNDARY_HOUR:
+    if local.hour < 18:
         return (local.date() - timedelta(days=1)).strftime("%Y-%m-%d")
     return local.strftime("%Y-%m-%d")
 
@@ -184,26 +168,24 @@ def poll_rss():
             feed = feedparser.parse(feed_url)
             for entry in feed.entries:
                 pub = getattr(entry, "published", None) or getattr(entry, "updated", None)
-                if not is_recent(pub, MAX_HOURS):
-                    continue
                 link = normalize_url(getattr(entry, "link", ""))
                 title = getattr(entry, "title", "").strip()
-                if not link or not title:
+                if not pub or not title or not link:
                     continue
                 if has_seen(link):
                     continue
-                send_telegram("NHL-UUTINEN\n\n{0}\n{1}".format(title, link))
+                send_telegram(f"NHL-UUTINEN\n\n{title}\n{link}")
                 mark_seen(link)
         except Exception as e:
-            logging.warning("RSS error {0}: {1}".format(feed_url, e))
+            logging.warning(f"RSS error: {e}")
             time.sleep(2)
 
 # ---------------------------------------------------------------------------
-# TWITTER / X — A-version (no API key, no snscrape)
+# TWITTER / X — A-version (ei API-keytä, ei snscrapea)
 # ---------------------------------------------------------------------------
 def twitter_get_user_id(username: str):
     try:
-        url = "https://cdn.syndication.twimg.com/user/by-screen-name/{0}".format(username)
+        url = f"https://cdn.syndication.twimg.com/user/by-screen-name/{username}"
         r = SESSION.get(url, timeout=HTTP_TIMEOUT)
         if r.status_code != 200:
             return None
@@ -214,17 +196,247 @@ def twitter_get_user_id(username: str):
 
 def twitter_get_latest_tweets(user_id: str, limit=5):
     try:
-        url = "https://cdn.syndication.twimg.com/timeline/profile/{0}.json".format(user_id)
+        url = f"https://cdn.syndication.twimg.com/timeline/profile/{user_id}.json"
         r = SESSION.get(url, timeout=HTTP_TIMEOUT)
         if r.status_code != 200:
             return []
         data = r.json()
-        items = data.get("instructions", [])
         tweets = []
-        for instr in items:
+        for instr in tweets:        for instr in data.get("instructions", []):
+                tid = tw.get("id_str") or tw.get("id")
+                text = tw.get("full_text") or tw.get("text") or ""
+                url = f"https://x.com/{handle}/status/{tid}"
+
+                if has_seen(url):
+                    continue
+
+                send_telegram(f"X — {handle}\n\n{text}\n{url}")
+                mark_seen(url)
+        except Exception as e:
+            logging.warning(f"Twitter error: {e}")
+
+# ---------------------------------------------------------------------------
+# NHL MODERN ENDPOINTS
+# ---------------------------------------------------------------------------
+
+# ---------------- SCHEDULE ----------------
+def nhl_schedule(date_str: str):
+    url = f"https://api-web.nhle.com/v1/schedule/{date_str}"
+    r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+    r.raise_for_status()
+    data = r.json()
+
+    games = []
+    if "games" in data:
+        games = data["games"]
+    elif "gameWeek" in data:
+        for day in data["gameWeek"]:
+            games.extend(day.get("games", []))
+
+    return games  # list of games
+
+
+# ---------------- PLAY BY PLAY (GOALS + ASSISTS + TIME) ----------------
+def nhl_play_by_play(game_pk: int):
+    url = f"https://api-web.nhle.com/v1/gamecenter/{game_pk}/play-by-play"
+    r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+# Extract goals:
+def extract_goals(pbp_json):
+    plays = pbp_json.get("plays", [])
+    goals = []
+    for p in plays:
+        if p.get("typeDescKey") == "goal":
+            details = p.get("details", {})
+            goals.append({
+                "time": p.get("timeInPeriod", "?"),
+                "period": p.get("periodDescriptor", {}).get("number", 0),
+                "scorer": details.get("scoringPlayerId"),
+                "a1": details.get("assist1PlayerId"),
+                "a2": details.get("assist2PlayerId"),
+            })
+    return goals
+
+
+# ---------------- PLAYER NAME LOOKUP ----------------
+def get_player_name(player_id: int):
+    # Player landing contains first & last names
+    try:
+        url = f"https://api-web.nhle.com/v1/player/{player_id}/landing"
+        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+        if r.status_code != 200:
+            return f"Player {player_id}"
+        data = r.json()
+        fn = data.get("firstName", {}).get("default", "")
+        ln = data.get("lastName", {}).get("default", "")
+        name = f"{fn} {ln}".strip()
+        return name if name else f"Player {player_id}"
+    except:
+        return f"Player {player_id}"
+
+
+# ---------------- GAME SCORERS (POINTS) ----------------
+def calculate_points(goal_events):
+    """Return dict {playerId: {"g":X, "a":Y}}"""
+    pts = {}
+    for g in goal_events:
+        s = g["scorer"]
+        if s:
+            pts.setdefault(s, {"g": 0, "a": 0})
+            pts[s]["g"] += 1
+        if g["a1"]:
+            pts.setdefault(g["a1"], {"g": 0, "a": 0})
+            pts[g["a1"]]["a"] += 1
+        if g["a2"]:
+            pts.setdefault(g["a2"], {"g": 0, "a": 0})
+            pts[g["a2"]]["a"] += 1
+    return pts
+
+
+# ---------------- TEAM NAME (FULL) ----------------
+def get_team_full_name(team_block):
+    # Games list has homeTeam/awayTeam -> commonName.default
+    name = team_block.get("commonName", {}).get("default")
+    if name:
+        return name
+    # fallback abbrev
+    return team_block.get("abbrev", "Team")
+
+
+# ---------------- STANDINGS ----------------
+def nhl_standings():
+    url = "https://api-web.nhle.com/v1/standings-season"
+    r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+    r.raise_for_status()
+    data = r.json()
+
+    divisions = {}
+    for row in data:
+        div = row.get("divisionName")
+        if not div:
+            continue
+        team = row.get("teamName", "")
+        pts = row.get("points", 0)
+        w = row.get("wins", 0)
+        l = row.get("losses", 0)
+        ot = row.get("otLosses", 0)
+
+        divisions.setdefault(div, []).append((team, pts, w, l, ot))
+
+    for div in divisions:
+        divisions[div].sort(key=lambda x: -x[1])
+
+    return divisions
+
+
+# ---------------- PLAYER SEARCH ----------------
+def search_player(query: str):
+    try:
+        url = f"https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q={query}"
+        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        return r.json().get("items", [])
+    except:
+        return []
+
+
+# ---------------- PLAYER STATS ----------------
+def get_player_stats(player_id: int):
+    # determine season
+    now = now_local()
+    yr = now.year
+    if now.month < 7:
+        season = f"{yr-1}{yr}"
+    else:
+        season = f"{yr}{yr+1}"
+
+    url = f"https://api-web.nhle.com/v1/skaters/{season}?site=en_nhl&gameType=2"
+    r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+    if r.status_code != 200:
+        return None
+
+    for p in r.json():
+        if int(p.get("playerId", -1)) == int(player_id):
+            return {
+                "games": p.get("gamesPlayed", 0),
+                "goals": p.get("goals", 0),
+                "assists": p.get("assists", 0),
+                "points": p.get("points", 0),
+            }
+    return None
+
+
+# ---------------------------------------------------------------------------
+# GAMES + GOALS + SCORERS OUTPUT FORMAT
+# ---------------------------------------------------------------------------
+def format_game_output(game, goal_events):
+    home = get_team_full_name(game.get("homeTeam", {}))
+    away = get_team_full_name(game.get("awayTeam", {}))
+
+    hsc = game.get("homeTeam", {}).get("score")
+    asc = game.get("awayTeam", {}).get("score")
+
+    # Match header
+    if hsc is not None and asc is not None:
+        header = f"🏁 {home} {hsc} – {asc} {away}"
+    else:
+        # Scheduled
+        start_utc = game.get("startTimeUTC") or game.get("gameDate")
+        try:
+            dt = dateparser.parse(start_utc).astimezone(pytz.timezone(TIMEZONE))
+            t = dt.strftime("%H:%M")
+        except:
+            t = "?"
+        header = f"⏰ {away} @ {home} klo {t}"
+
+    # Goals (formatted)
+    if goal_events:
+        lines = ["Maalit:"]
+        for ev in goal_events:
+            scorer = get_player_name(ev["scorer"])
+            a1 = get_player_name(ev["a1"]) if ev["a1"] else None
+            a2 = get_player_name(ev["a2"]) if ev["a2"] else None
+
+            if a1 and a2:
+                assist = f"{a1}, {a2}"
+            elif a1:
+                assist = a1
+            else:
+                assist = ""
+
+            if assist:
+                lines.append(f" • {ev['time']} {scorer} ({assist})")
+            else:
+                lines.append(f" • {ev['time']} {scorer}")
+        header += "\n" + "\n".join(lines)
+
+    # Scorers summary
+    pts = calculate_points(goal_events)
+    if pts:
+        lines = ["Pistemiehet:"]
+        # sort by points desc
+        out_pts = []
+        for pid, d in pts.items():
+            g = d["g"]
+            a = d["a"]
+            p = g + a
+            name = get_player_name(pid)
+            out_pts.append((p, name, g, a))
+        out_pts.sort(key=lambda x: (-x[0], x[1]))
+
+        for p, name, g, a in out_pts:
+            lines.append(f" • {name} {g}+{a}={p}")
+
+        header += "\n\n" + "\n".join(lines)
+
+    return header
             if "addEntries" in instr:
-                for entry in instr["addEntries"]["entries"]:
-                    tw = entry.get("content", {}).get("item", {}).get("content", {}).get("tweet")
+                ents = instr["addEntries"]["entries"]
+                for e in ents:
+                    tw = e.get("content", {}).get("item", {}).get("content", {}).get("tweet")
                     if tw:
                         tweets.append(tw)
         return tweets[:limit]
@@ -234,385 +446,19 @@ def twitter_get_latest_tweets(user_id: str, limit=5):
 def poll_twitter():
     for handle in TWITTER_USERS:
         try:
-            key = "twitter_userid_{0}".format(handle)
-            user_id = get_setting(key)
-            if not user_id:
-                user_id = twitter_get_user_id(handle)
-                if not user_id:
-                    continue
-                set_setting(key, user_id)
-            tweets = twitter_get_latest_tweets(user_id)
-            for tw in tweets:
-                tid = tw.get("id_str") or tw.get("id")
-                text = tw.get("full_text") or tw.get("text") or ""
-                created = tw.get("created_at")
-                url = "https://x.com/{0}/status/{1}".format(handle, tid)
-                if not is_recent(created, MAX_HOURS):
-                    continue
-                if has_seen(url):
-                    continue
-                send_telegram("X — {0}\n\n{1}\n{2}".format(handle, text, url))
-                mark_seen(url)
-        except Exception as e:
-            logging.warning("Twitter error {0}: {1}".format(handle, e))
+            key = f"twitter_uid_{handle}"
+            uid = get_setting(key)
+            if not uid:
+                uid = twitter_get_user_id(handle)
+                if uid:
+                    set_setting(key, uid)
+            if not uid:
+                continue
+
+            tweets = twitter_get_latest_tweets(uid)
 
 # ---------------------------------------------------------------------------
-# MODERN NHL ENDPOINTS (SCHEDULE, BOXSCORE, PLAYER SEARCH)
-# ---------------------------------------------------------------------------
-def nhl_schedule(date_str: str):
-    """
-    Moderni paivakohtainen schedule (api-web.nhle.com).
-    Normalisoidaan muotoon {"dates":[{"games":[...]}]}.
-    """
-    url = "https://api-web.nhle.com/v1/schedule/{0}".format(date_str)
-    r = SESSION.get(url, timeout=HTTP_TIMEOUT)
-    r.raise_for_status()
-    data = r.json()
-
-    games = []
-    if isinstance(data, dict):
-        if "games" in data:
-            games = data["games"]
-        elif "gameWeek" in data:
-            for day in data["gameWeek"]:
-                games.extend(day.get("games", []))
-    return {"dates": [{"games": games}]}
-
-# ---- nationality caching (for Finnish player detection) ----
-def cache_get_nat(player_id: int):
-    return get_setting("nat_{0}".format(player_id))
-
-def cache_set_nat(player_id: int, nat: str):
-    if nat:
-        set_setting("nat_{0}".format(player_id), nat)
-
-def resolve_nationality(player_id: int, fallback_name: str = "") -> str:
-    """
-    Taydentaa pelaajan kansallisuuden search.d3 API:sta,
-    koska modernissa boxscoren datassa nationality voi puuttua.
-    """
-    cached = cache_get_nat(player_id)
-    if cached:
-        return cached
-    try:
-        q = fallback_name if fallback_name else str(player_id)
-        url = "https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q={0}".format(q)
-        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
-        if r.status_code == 200:
-            for it in r.json().get("items", []):
-                if int(it.get("playerId", 0)) == int(player_id):
-                    nat = (it.get("birthCountry") or "").upper()
-                    if nat:
-                        cache_set_nat(player_id, nat)
-                        return nat
-    except:
-        pass
-    return ""
-
-def nhl_boxscore(game_pk: int):
-    """
-    Moderni boxscore (api-web.nhle.com). Tukee players[] ja playerByGameStats[].
-    Normalisoidaan muotoon {"teams":{"home":{...},"away":{...}}}.
-    """
-    url = "https://api-web.nhle.com/v1/gamecenter/{0}/boxscore".format(game_pk)
-    r = SESSION.get(url, timeout=HTTP_TIMEOUT)
-    r.raise_for_status()
-    raw = r.json()
-
-    wrapped = {"teams": {}}
-
-    for src, dst in (("homeTeam", "home"), ("awayTeam", "away")):
-        t = raw.get(src, {})
-        name = t.get("name", "") or t.get("abbrev", "")
-
-        players = t.get("players")
-        dict_players = {}
-
-        if isinstance(players, list) and players:
-            # players[]-rakenne
-            for p in players:
-                pid = int(p.get("playerId"))
-                fullName = p.get("name")
-                nat = (p.get("nationality") or "").upper()
-                if not nat:
-                    nat = resolve_nationality(pid, fullName)
-                sk = p.get("skaterStats") or {}
-                gk = p.get("goalieStats") or {}
-                dict_players["ID{0}".format(pid)] = {
-                    "person": {"fullName": fullName, "nationality": nat},
-                    "stats": {"skaterStats": sk if sk else None, "goalieStats": gk if gk else None},
-                }
-        else:
-            # playerByGameStats-fallback
-            pstats = t.get("playerByGameStats", {})
-            merged = []
-            for key in ("forwards", "defense", "goalies", "scratches"):
-                arr = pstats.get(key, [])
-                if isinstance(arr, list):
-                    merged.extend(arr)
-
-            for p in merged:
-                pid = int(p.get("playerId"))
-                fullName = p.get("name", {}).get("default") or p.get("name") or ""
-                nat = resolve_nationality(pid, fullName)
-
-                sk = None
-                gk = None
-                if (p.get("position") or "").upper() != "G":
-                    sk = {
-                        "goals": p.get("goals", 0),
-                        "assists": p.get("assists", 0),
-                        "points": p.get("points", 0),
-                        "plusMinus": p.get("plusMinus", 0),
-                        "hits": p.get("hits"),
-                        "shots": p.get("shots"),
-                        "timeOnIce": p.get("toi") or p.get("timeOnIce"),
-                        "penaltyMinutes": p.get("pim"),
-                    }
-                else:
-                    gk = {
-                        "saves": p.get("saves", 0),
-                        "shotsAgainst": p.get("shots") or p.get("shotsAgainst", 0),
-                        "timeOnIce": p.get("toi") or p.get("timeOnIce"),
-                    }
-
-                dict_players["ID{0}".format(pid)] = {
-                    "person": {"fullName": fullName, "nationality": nat},
-                    "stats": {"skaterStats": sk, "goalieStats": gk},
-                }
-
-        wrapped["teams"][dst] = {"team": {"name": name}, "players": dict_players}
-
-    return wrapped
-
-def search_player_by_name(query: str):
-    """Player search via search.d3."""
-    try:
-        url = "https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q={0}".format(query)
-        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
-        r.raise_for_status()
-        items = r.json().get("items", [])
-        out = []
-        for it in items:
-            out.append({
-                "id": it.get("playerId"),
-                "fullName": it.get("name"),
-                "currentTeam": {"name": it.get("teamAbbrev") or it.get("teamName", "")},
-                "primaryPosition": {"name": it.get("positionCode", "")},
-            })
-        return out
-    except:
-        return []
-
-def get_player_stats(player_id: int):
-    """
-    Kausitilastot stats REST -rajapinnasta (kausiaggregaatit).
-    """
-    try:
-        url = (
-            "https://api.nhle.com/stats/rest/en/skater/summary"
-            "?isAggregate=false&isGame=false&start=0&limit=1"
-            "&cayenneExp=playerId={0}%20and%20gameTypeId=2"
-        ).format(player_id)
-        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
-        data = r.json()
-        rows = data.get("data", [])
-        if rows:
-            row = rows[0]
-            return {
-                "games": row.get("gamesPlayed", 0),
-                "goals": row.get("goals", 0),
-                "assists": row.get("assists", 0),
-            }
-    except:
-        pass
-    return {}
-
-# ---------------------------------------------------------------------------
-# Games list with scorers (A-version: listaa pistemiehet; ei erillista suomalaisrivia)
-# ---------------------------------------------------------------------------
-FINISHED_STATES = {"FINAL", "OFF"}      # OFF = finished joissain feedeissa
-LIVE_STATES     = {"LIVE", "INPROGRESS", "IN_PROGRESS"}
-FUTURE_STATES   = {"FUT", "SCHEDULED", "PRE"}
-
-def filter_games_by_state(games, include_future=False):
-    """Palauta vain finished+live ellei include_future=True."""
-    out = []
-    for g in games:
-        state = (g.get("gameState") or g.get("gameScheduleState") or "").upper()
-        if state in FINISHED_STATES or state in LIVE_STATES:
-            out.append(g)
-        elif include_future:
-            out.append(g)
-    return out
-
-def get_game_scorers(game_pk: int):
-    """
-    Hakee ottelun pistemiehet landing-endpointin kautta.
-    Palauttaa rivit kuten: 'Barkov 1+2=3'
-    """
-    try:
-        url = "https://api-web.nhle.com/v1/gamecenter/{0}/landing".format(game_pk)
-        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
-
-        scorers = []
-        pg = data.get("playerByGameStats", {})
-
-        for side in ("homeTeam", "awayTeam"):
-            side_block = pg.get(side, {})
-            players = []
-            for key in ("forwards", "defense", "goalies"):
-                arr = side_block.get(key, [])
-                if isinstance(arr, list):
-                    players.extend(arr)
-
-            for p in players:
-                name = p.get("name", {}).get("default") or p.get("name") or ""
-                g = int(p.get("goals", 0))
-                a = int(p.get("assists", 0))
-                pts = g + a
-                if pts > 0:
-                    scorers.append("{0} {1}+{2}={3}".format(name, g, a, pts))
-
-        def pts_key(line):
-            # line format: 'Name G+A=P'
-            pts = int(line.split("=")[1])
-            return (-pts, line.lower())
-
-        scorers.sort(key=pts_key)
-        return scorers
-
-    except Exception as e:
-        logging.warning("landing scorers error: {0}".format(e))
-        return []
-
-def get_games_with_finns(date_str: str, include_future: bool = False):
-    try:
-        sch = nhl_schedule(date_str)
-    except:
-        return []
-    dates = sch.get("dates", [])
-    if not dates:
-        return []
-
-    games = dates[0].get("games", [])
-    games = filter_games_by_state(games, include_future=include_future)
-
-    out = []
-    for g in games:
-        home = g.get("homeTeam", {}).get("name") or g.get("homeTeam", {}).get("abbrev") or "Home"
-        away = g.get("awayTeam", {}).get("name") or g.get("awayTeam", {}).get("abbrev") or "Away"
-        state = (g.get("gameState") or g.get("gameScheduleState") or "").upper()
-        start_utc = g.get("startTimeUTC") or g.get("gameTimeUTC") or g.get("gameDate")
-        hsc = g.get("homeTeam", {}).get("score")
-        asc = g.get("awayTeam", {}).get("score")
-
-        try:
-            dt = dateparser.parse(start_utc).astimezone(pytz.timezone(TIMEZONE))
-            t = dt.strftime("%H:%M")
-        except:
-            t = "?"
-
-        if state in FINISHED_STATES:
-            header = "{0} {1} – {2} {3}".format(home, hsc, asc, away)
-            header = "FINAL " + header
-        elif state in LIVE_STATES:
-            header = "LIVE {0} {1} – {2} {3}".format(home, hsc, asc, away)
-        else:
-            header = "{0} @ {1} klo {2}".format(away, home, t)
-
-        game_pk = g.get("id") or g.get("gameId") or g.get("gamePk")
-        if game_pk:
-            try:
-                scorers = get_game_scorers(int(game_pk))
-                if scorers:
-                    header += "\nPistemiehet:\n" + "\n".join("  • " + s for s in scorers)
-            except:
-                pass
-
-        out.append(header)
-
-    return out
-
-# ---------------------------------------------------------------------------
-# Finnish players' nightly points for a given date
-# ---------------------------------------------------------------------------
-def fetch_finnish_points_for_date(date_str: str):
-    try:
-        sch = nhl_schedule(date_str)
-    except:
-        return []
-
-    dates = sch.get("dates", [])
-    if not dates:
-        return []
-
-    games = dates[0].get("games", [])
-    results = []
-
-    for g in games:
-        game_pk = g.get("id") or g.get("gameId") or g.get("gamePk")
-        if not game_pk:
-            continue
-        try:
-            box = nhl_boxscore(int(game_pk))
-        except:
-            continue
-
-        for side in ("home", "away"):
-            team = box.get("teams", {}).get(side, {})
-            tname = team.get("team", {}).get("name", "")
-            players = team.get("players", {}) or {}
-
-            for pdata in players.values():
-                person = pdata.get("person", {})
-                if person.get("nationality", "").upper() != "FIN":
-                    continue
-
-                name = person.get("fullName", "")
-                stats = pdata.get("stats", {})
-
-                if stats.get("skaterStats"):
-                    s = stats["skaterStats"]
-                    g_ = int(s.get("goals", 0))
-                    a_ = int(s.get("assists", 0))
-                    p_ = g_ + a_
-                    plus = s.get("plusMinus", 0)
-                    toi = s.get("toi") or s.get("timeOnIce") or "00:00"
-                    shots = s.get("shots")
-                    hits = s.get("hits")
-                    pim = s.get("pim") or s.get("penaltyMinutes")
-
-                    header = "{0} ({1}) {2}+{3}={4}, ±{5}, TOI {6}".format(name, tname, g_, a_, p_, plus, toi)
-                    notes = []
-                    if shots not in [None, ""]: notes.append("Laukaukset {0}".format(shots))
-                    if hits  not in [None, ""]: notes.append("Taklaukset {0}".format(hits))
-                    if pim   not in [None, "", 0]: notes.append("Jäähyt {0} min".format(pim))
-
-                    line = "• " + header
-                    if notes:
-                        line += "\n  " + " | ".join(notes)
-                    results.append((p_, name, line))
-
-                elif stats.get("goalieStats"):
-                    gk = stats["goalieStats"]
-                    sv = int(gk.get("saves", 0))
-                    sa = int(gk.get("shots") or gk.get("shotsAgainst", 0))
-                    toi = gk.get("toi") or gk.get("timeOnIce") or "00:00"
-                    svpct = round(sv / sa, 3) if sa > 0 else "—"
-                    header = "{0} ({1})\nMV: {2}/{3} torjuntaa, SV% {4}, TOI {5}".format(name, tname, sv, sa, svpct, toi)
-                    results.append((0, name, "• " + header))
-
-    results.sort(key=lambda x: (-x[0], x[1]))
-    return [r[2] for r in results]
-    
-# ---------------------------------------------------------------------------
-# Telegram getUpdates (long polling)
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Telegram getUpdates (long polling)
+# TELEGRAM POLLING
 # ---------------------------------------------------------------------------
 def tg_get_updates(offset):
     try:
@@ -628,146 +474,109 @@ def tg_get_updates(offset):
         logging.warning(f"getUpdates error: {e}")
         return []
 
-# ---------------------------------------------------------------------------
-# Standings (divisions)
-# ---------------------------------------------------------------------------
-def get_standings():
-    """
-    Hakee kuluvan kauden standingsit kaikista divisioonista.
-    Palauttaa dict:
-        { "Atlantic": [ (teamName, PTS, W, L, OT), ... ], ... }
-    """
-    try:
-        now = now_local()
-        year = now.year
-        # Kausi alkaa syksyllä => jos kevät, kausi on esim 20252026
-        if now.month < 7:
-            season = f"{year-1}{year}"
-        else:
-            season = f"{year}{year+1}"
-
-        url = f"https://api-web.nhle.com/v1/standings/{season}"
-        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
-
-        divisions = {}
-        for team in data:
-            div = team.get("divisionName", "Unknown")
-            name = team.get("teamName", "Team")
-            pts = team.get("points", 0)
-            w = team.get("wins", 0)
-            l = team.get("losses", 0)
-            ot = team.get("otLosses", 0)
-            divisions.setdefault(div, []).append((name, pts, w, l, ot))
-
-        for div in divisions:
-            divisions[div].sort(key=lambda x: -x[1])
-
-        return divisions
-
-    except Exception as e:
-        logging.warning(f"standings error: {e}")
-        return {}
 
 # ---------------------------------------------------------------------------
-# Telegram command handler
+# COMMAND HANDLER
 # ---------------------------------------------------------------------------
 def handle_command(cmd: str, chat_id):
     c = cmd.strip().split()[0].lower()
 
-    # PING
-    if c.startswith("/ping"):
+    # /ping
+    if c == "/ping":
         send_telegram("pong", chat_id)
         return
 
-    # SUOMALAISET (pisteet, viime yön kierros)
-    if c.startswith("/suomalaiset"):
-        d = nhl_effective_date()
-        rows = fetch_finnish_points_for_date(d)
-        if rows:
-            send_telegram(f"🇫🇮 Suomalaiset — {d}\n\n" + "\n\n".join(rows), chat_id)
-        else:
-            send_telegram(f"🇫🇮 Suomalaiset — {d}\nEi suomalaispisteitä.", chat_id)
+    # /games
+    if c == "/games":
+        date_str = nhl_effective_date()
+        games = nhl_schedule(date_str)
+
+        if not games:
+            send_telegram("Ei otteluita.", chat_id)
+            return
+
+        out_lines = []
+        for g in games:
+            game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
+            if not game_pk:
+                continue
+
+            try:
+                pbp = nhl_play_by_play(int(game_pk))
+                goals = extract_goals(pbp)
+            except:
+                goals = []
+
+            block = format_game_output(g, goals)
+            out_lines.append(block)
+
+        msg = "📅 NHL-ottelut\n\n" + "\n\n".join(out_lines)
+        send_telegram(msg, chat_id)
         return
 
-    # STATS/TEST (sama kuin suomalaiset, mutta eri otsikko)
-    if c.startswith("/stats") or c.startswith("/test"):
-        d = nhl_effective_date()
-        rows = fetch_finnish_points_for_date(d)
-        if rows:
-            send_telegram(f"📊 Suomalaisraportti — {d}\n\n" + "\n\n".join(rows), chat_id)
-        else:
-            send_telegram(f"📊 Suomalaisraportti — {d}\nEi suomalaispisteitä.", chat_id)
-        return
-
-    # PLAYERS <nimi>
-    if c.startswith("/players"):
+    # /players <nimi>
+    if c == "/players":
         parts = cmd.split(maxsplit=1)
         if len(parts) < 2:
             send_telegram("Käyttö: /players <nimi>", chat_id)
             return
-        
+
         q = parts[1].strip()
-        players = search_player_by_name(q)
-
-        if not players:
-            send_telegram(f"Ei pelaajia haulla: {q}", chat_id)
+        results = search_player(q)
+        if not results:
+            send_telegram(f"Ei pelaajaa haulla: {q}", chat_id)
             return
-        
-        p = players[0]
-        pid = p.get("id")
-        name = p.get("fullName", "")
-        team = p.get("currentTeam", {}).get("name", "")
-        pos = p.get("primaryPosition", {}).get("name", "")
-        stats = get_player_stats(pid)
 
-        g = stats.get("goals", 0)
-        a = stats.get("assists", 0)
-        gp = stats.get("games", 0)
+        p = results[0]
+        pid = p.get("playerId")
+        name = p.get("name")
+        team = p.get("teamName") or p.get("teamAbbrev", "")
+
+        stats = get_player_stats(pid)
+        if not stats:
+            send_telegram(f"Pelaajaa ei löytynyt tilastoista: {name}", chat_id)
+            return
+
+        g = stats["goals"]
+        a = stats["assists"]
+        pts = stats["points"]
+        gp = stats["games"]
 
         msg = (
             f"📌 Pelaaja: {name}\n"
-            f"Joukkue: {team}\n"
-            f"Pelipaikka: {pos}\n\n"
-            f"Pelit: {gp}\n"
-            f"Pisteet: {g}+{a}={g+a}"
+            f"Joukkue: {team}\n\n"
+            f"Pelatut: {gp}\n"
+            f"Pisteet: {g}+{a}={pts}"
         )
         send_telegram(msg, chat_id)
         return
 
-    # GAMES / GAMES ALL
-    if c.startswith("/games"):
-        include_future = "all" in cmd.lower()
-        d = nhl_effective_date()
-        lines = get_games_with_finns(d, include_future=include_future)
-        if not lines:
-            send_telegram("Ei otteluita.", chat_id)
-        else:
-            send_telegram("📅 NHL-ottelut:\n\n" + "\n\n".join(lines), chat_id)
-        return
-
-    # STANDINGS
-    if c.startswith("/standings"):
-        divs = get_standings()
+    # /standings
+    if c == "/standings":
+        divs = nhl_standings()
         if not divs:
-            send_telegram("Ei saatu standings-tietoja.", chat_id)
+            send_telegram("Standings-tietoja ei saatu.", chat_id)
             return
 
-        out = "🏆 NHL Standings (Divisions)\n"
+        out = ["🏆 NHL Standings (Divisions):"]
         for div, teams in divs.items():
-            out += f"\n📌 {div}\n"
-            for name, pts, w, l, ot in teams:
-                out += f"  • {name}: {pts}p ({w}-{l}-{ot})\n"
+            out.append(f"\n{div}")
+            for (team, pts, w, l, ot) in teams:
+                out.append(f" • {team}: {pts}p ({w}-{l}-{ot})")
 
-        send_telegram(out, chat_id)
+        send_telegram("\n".join(out), chat_id)
         return
 
-    # UNKNOWN COMMAND
-    send_telegram("Tuntematon komento.\nKokeile: /ping /players /games /suomalaiset /stats /test /standings", chat_id)
+    # Unknown command
+    send_telegram(
+        "Tuntematon komento.\n"
+        "Kokeile: /games /players <nimi> /standings /ping",
+        chat_id
+    )
+
 
 # ---------------------------------------------------------------------------
-# Poll telegram commands
+# POLL COMMANDS
 # ---------------------------------------------------------------------------
 def poll_commands(state):
     if not ENABLE_COMMANDS:
@@ -801,35 +610,6 @@ def poll_commands(state):
 
     state["tg_offset"] = maxid + 1
 
-# ---------------------------------------------------------------------------
-# 08:00 Finnish nightly report
-# ---------------------------------------------------------------------------
-def send_nightly_finns_once():
-    last = get_setting("last_stats_date")
-    target = nhl_effective_date()
-
-    if last == target:
-        return
-
-    now = now_local()
-    if now.hour > NIGHTLY_STATS_HOUR or (now.hour == NIGHTLY_STATS_HOUR and now.minute >= NIGHTLY_STATS_MINUTE):
-        # Retry logic (Railway Free can drop DNS occasionally)
-        for attempt in range(5):
-            try:
-                rows = fetch_finnish_points_for_date(target)
-                if rows:
-                    msg = f"🇫🇮 Viime yön suomalaiset — {target}\n\n" + "\n\n".join(rows)
-                else:
-                    msg = f"🇫🇮 Viime yön suomalaiset — {target}\nEi suomalaispisteitä."
-
-                send_telegram(msg)
-                set_setting("last_stats_date", target)
-                return
-
-            except Exception as e:
-                if attempt == 4:
-                    send_telegram(f"⚠️ Suomalaisraportti epäonnistui: {e}")
-                time.sleep(4 * (attempt + 1))
 
 # ---------------------------------------------------------------------------
 # MAIN LOOP
@@ -848,7 +628,7 @@ def main():
         now_ts = time.time()
 
         try:
-            # commands
+            # Commands
             if now_ts - last_cmd >= UPDATES_POLL_SECONDS:
                 poll_commands(state)
                 last_cmd = now_ts
@@ -863,18 +643,15 @@ def main():
                 poll_twitter()
                 last_tw = now_ts
 
-            # nightly FIN report
-            send_nightly_finns_once()
-
             time.sleep(1)
 
         except Exception as e:
             logging.warning(f"Main loop error: {e}")
             time.sleep(5)
 
+
 # ---------------------------------------------------------------------------
 # ENTRYPOINT
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     main()
-
