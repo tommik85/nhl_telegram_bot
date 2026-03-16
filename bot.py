@@ -174,18 +174,18 @@ def poll_rss():
                     continue
                 if has_seen(link):
                     continue
-                send_telegram(f"NHL-UUTINEN\n\n{title}\n{link}")
+                send_telegram("NHL-UUTINEN\n\n{0}\n{1}".format(title, link))
                 mark_seen(link)
         except Exception as e:
-            logging.warning(f"RSS error: {e}")
+            logging.warning("RSS error: {0}".format(e))
             time.sleep(2)
 
 # ---------------------------------------------------------------------------
-# TWITTER / X — A-version (ei API-keytä, ei snscrapea)
+# TWITTER / X — A-version (no API key)
 # ---------------------------------------------------------------------------
-def twitter_get_user_id(username: str):
+def twitter_get_user_id(username):
     try:
-        url = f"https://cdn.syndication.twimg.com/user/by-screen-name/{username}"
+        url = "https://cdn.syndication.twimg.com/user/by-screen-name/{0}".format(username)
         r = SESSION.get(url, timeout=HTTP_TIMEOUT)
         if r.status_code != 200:
             return None
@@ -194,93 +194,101 @@ def twitter_get_user_id(username: str):
     except:
         return None
 
-def twitter_get_latest_tweets(user_id: str, limit=5):
+def twitter_get_latest_tweets(user_id, limit=5):
     try:
-        url = f"https://cdn.syndication.twimg.com/timeline/profile/{user_id}.json"
+        url = "https://cdn.syndication.twimg.com/timeline/profile/{0}.json".format(user_id)
         r = SESSION.get(url, timeout=HTTP_TIMEOUT)
         if r.status_code != 200:
             return []
         data = r.json()
         tweets = []
-        for instr in tweets:        for instr in data.get("instructions", []):
+        for instr in data.get("instructions", []):
+            if "addEntries" in instr:
+                for ent in instr["addEntries"]["entries"]:
+                    tw = ent.get("content", {}).get("item", {}).get("content", {}).get("tweet")
+                    if tw:
+                        tweets.append(tw)
+        return tweets[:limit]
+    except:
+        return []
+
+def poll_twitter():
+    for handle in TWITTER_USERS:
+        try:
+            key = "twitter_uid_{0}".format(handle)
+            uid = get_setting(key)
+            if not uid:
+                uid = twitter_get_user_id(handle)
+                if uid:
+                    set_setting(key, uid)
+            if not uid:
+                continue
+
+            tweets = twitter_get_latest_tweets(uid)
+            for tw in tweets:
                 tid = tw.get("id_str") or tw.get("id")
                 text = tw.get("full_text") or tw.get("text") or ""
-                url = f"https://x.com/{handle}/status/{tid}"
-
+                url = "https://x.com/{0}/status/{1}".format(handle, tid)
                 if has_seen(url):
                     continue
-
-                send_telegram(f"X — {handle}\n\n{text}\n{url}")
+                send_telegram("X ({0})\n\n{1}\n{2}".format(handle, text, url))
                 mark_seen(url)
         except Exception as e:
-            logging.warning(f"Twitter error: {e}")
+            logging.warning("Twitter error: {0}".format(e))
 
 # ---------------------------------------------------------------------------
 # NHL MODERN ENDPOINTS
 # ---------------------------------------------------------------------------
 
-# ---------------- SCHEDULE ----------------
-def nhl_schedule(date_str: str):
-    url = f"https://api-web.nhle.com/v1/schedule/{date_str}"
+def nhl_schedule(date_str):
+    url = "https://api-web.nhle.com/v1/schedule/{0}".format(date_str)
     r = SESSION.get(url, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     data = r.json()
-
-    games = []
     if "games" in data:
-        games = data["games"]
-    elif "gameWeek" in data:
+        return data["games"]
+    games = []
+    if "gameWeek" in data:
         for day in data["gameWeek"]:
             games.extend(day.get("games", []))
+    return games
 
-    return games  # list of games
-
-
-# ---------------- PLAY BY PLAY (GOALS + ASSISTS + TIME) ----------------
-def nhl_play_by_play(game_pk: int):
-    url = f"https://api-web.nhle.com/v1/gamecenter/{game_pk}/play-by-play"
+def nhl_play_by_play(game_pk):
+    url = "https://api-web.nhle.com/v1/gamecenter/{0}/play-by-play".format(game_pk)
     r = SESSION.get(url, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     return r.json()
 
-
-# Extract goals:
 def extract_goals(pbp_json):
     plays = pbp_json.get("plays", [])
     goals = []
     for p in plays:
         if p.get("typeDescKey") == "goal":
-            details = p.get("details", {})
+            d = p.get("details", {})
             goals.append({
                 "time": p.get("timeInPeriod", "?"),
                 "period": p.get("periodDescriptor", {}).get("number", 0),
-                "scorer": details.get("scoringPlayerId"),
-                "a1": details.get("assist1PlayerId"),
-                "a2": details.get("assist2PlayerId"),
+                "scorer": d.get("scoringPlayerId"),
+                "a1": d.get("assist1PlayerId"),
+                "a2": d.get("assist2PlayerId")
             })
     return goals
 
-
-# ---------------- PLAYER NAME LOOKUP ----------------
-def get_player_name(player_id: int):
-    # Player landing contains first & last names
+def get_player_name(player_id):
     try:
-        url = f"https://api-web.nhle.com/v1/player/{player_id}/landing"
+        url = "https://api-web.nhle.com/v1/player/{0}/landing".format(player_id)
         r = SESSION.get(url, timeout=HTTP_TIMEOUT)
         if r.status_code != 200:
-            return f"Player {player_id}"
+            return "Player {0}".format(player_id)
         data = r.json()
         fn = data.get("firstName", {}).get("default", "")
         ln = data.get("lastName", {}).get("default", "")
-        name = f"{fn} {ln}".strip()
-        return name if name else f"Player {player_id}"
+        full = (fn + " " + ln).strip()
+        return full if full else "Player {0}".format(player_id)
     except:
-        return f"Player {player_id}"
+        return "Player {0}".format(player_id)
 
-
-# ---------------- GAME SCORERS (POINTS) ----------------
 def calculate_points(goal_events):
-    """Return dict {playerId: {"g":X, "a":Y}}"""
     pts = {}
     for g in goal_events:
         s = g["scorer"]
@@ -295,18 +303,12 @@ def calculate_points(goal_events):
             pts[g["a2"]]["a"] += 1
     return pts
 
-
-# ---------------- TEAM NAME (FULL) ----------------
 def get_team_full_name(team_block):
-    # Games list has homeTeam/awayTeam -> commonName.default
     name = team_block.get("commonName", {}).get("default")
     if name:
         return name
-    # fallback abbrev
     return team_block.get("abbrev", "Team")
 
-
-# ---------------- STANDINGS ----------------
 def nhl_standings():
     url = "https://api-web.nhle.com/v1/standings-season"
     r = SESSION.get(url, timeout=HTTP_TIMEOUT)
@@ -323,37 +325,27 @@ def nhl_standings():
         w = row.get("wins", 0)
         l = row.get("losses", 0)
         ot = row.get("otLosses", 0)
-
         divisions.setdefault(div, []).append((team, pts, w, l, ot))
 
     for div in divisions:
         divisions[div].sort(key=lambda x: -x[1])
-
     return divisions
 
-
-# ---------------- PLAYER SEARCH ----------------
-def search_player(query: str):
+def search_player(query):
     try:
-        url = f"https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q={query}"
+        url = "https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q={0}".format(query)
         r = SESSION.get(url, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
         return r.json().get("items", [])
     except:
         return []
 
-
-# ---------------- PLAYER STATS ----------------
-def get_player_stats(player_id: int):
-    # determine season
+def get_player_stats(player_id):
     now = now_local()
     yr = now.year
-    if now.month < 7:
-        season = f"{yr-1}{yr}"
-    else:
-        season = f"{yr}{yr+1}"
+    season = "{0}{1}".format(yr-1, yr) if now.month < 7 else "{0}{1}".format(yr, yr+1)
 
-    url = f"https://api-web.nhle.com/v1/skaters/{season}?site=en_nhl&gameType=2"
+    url = "https://api-web.nhle.com/v1/skaters/{0}?site=en_nhl&gameType=2".format(season)
     r = SESSION.get(url, timeout=HTTP_TIMEOUT)
     if r.status_code != 200:
         return None
@@ -364,35 +356,27 @@ def get_player_stats(player_id: int):
                 "games": p.get("gamesPlayed", 0),
                 "goals": p.get("goals", 0),
                 "assists": p.get("assists", 0),
-                "points": p.get("points", 0),
+                "points": p.get("points", 0)
             }
     return None
 
-
-# ---------------------------------------------------------------------------
-# GAMES + GOALS + SCORERS OUTPUT FORMAT
-# ---------------------------------------------------------------------------
 def format_game_output(game, goal_events):
     home = get_team_full_name(game.get("homeTeam", {}))
     away = get_team_full_name(game.get("awayTeam", {}))
-
     hsc = game.get("homeTeam", {}).get("score")
     asc = game.get("awayTeam", {}).get("score")
 
-    # Match header
     if hsc is not None and asc is not None:
-        header = f"🏁 {home} {hsc} – {asc} {away}"
+        header = "{0} {1} - {2} {3}".format(home, hsc, asc, away)
     else:
-        # Scheduled
         start_utc = game.get("startTimeUTC") or game.get("gameDate")
         try:
             dt = dateparser.parse(start_utc).astimezone(pytz.timezone(TIMEZONE))
             t = dt.strftime("%H:%M")
         except:
             t = "?"
-        header = f"⏰ {away} @ {home} klo {t}"
+        header = "{0} @ {1} klo {2}".format(away, home, t)
 
-    # Goals (formatted)
     if goal_events:
         lines = ["Maalit:"]
         for ev in goal_events:
@@ -401,61 +385,35 @@ def format_game_output(game, goal_events):
             a2 = get_player_name(ev["a2"]) if ev["a2"] else None
 
             if a1 and a2:
-                assist = f"{a1}, {a2}"
+                assist = "{0}, {1}".format(a1, a2)
             elif a1:
                 assist = a1
             else:
                 assist = ""
 
             if assist:
-                lines.append(f" • {ev['time']} {scorer} ({assist})")
+                lines.append(" • {0} {1} ({2})".format(ev["time"], scorer, assist))
             else:
-                lines.append(f" • {ev['time']} {scorer}")
+                lines.append(" • {0} {1}".format(ev["time"], scorer))
+
         header += "\n" + "\n".join(lines)
 
-    # Scorers summary
     pts = calculate_points(goal_events)
     if pts:
         lines = ["Pistemiehet:"]
-        # sort by points desc
-        out_pts = []
-        for pid, d in pts.items():
-            g = d["g"]
-            a = d["a"]
+        arr = []
+        for pid, res in pts.items():
+            g = res["g"]
+            a = res["a"]
             p = g + a
             name = get_player_name(pid)
-            out_pts.append((p, name, g, a))
-        out_pts.sort(key=lambda x: (-x[0], x[1]))
-
-        for p, name, g, a in out_pts:
-            lines.append(f" • {name} {g}+{a}={p}")
-
+            arr.append((p, name, g, a))
+        arr.sort(key=lambda x: (-x[0], x[1]))
+        for p, name, g, a in arr:
+            lines.append(" • {0} {1}+{2}={3}".format(name, g, a, p))
         header += "\n\n" + "\n".join(lines)
 
     return header
-            if "addEntries" in instr:
-                ents = instr["addEntries"]["entries"]
-                for e in ents:
-                    tw = e.get("content", {}).get("item", {}).get("content", {}).get("tweet")
-                    if tw:
-                        tweets.append(tw)
-        return tweets[:limit]
-    except:
-        return []
-
-def poll_twitter():
-    for handle in TWITTER_USERS:
-        try:
-            key = f"twitter_uid_{handle}"
-            uid = get_setting(key)
-            if not uid:
-                uid = twitter_get_user_id(handle)
-                if uid:
-                    set_setting(key, uid)
-            if not uid:
-                continue
-
-            tweets = twitter_get_latest_tweets(uid)
 
 # ---------------------------------------------------------------------------
 # TELEGRAM POLLING
