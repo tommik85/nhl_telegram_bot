@@ -280,16 +280,21 @@ def poll_twitter():
 # ---------------------------------------------------------------------------
 
 def nhl_schedule(date_str):
-    url = "https://api-web.nhle.com/v1/schedule/{0}".format(date_str)
+    url = f"https://api-web.nhle.com/v1/schedule/{date_str}"
     r = SESSION.get(url, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     data = r.json()
-    if "games" in data:
-        return data["games"]
+
     games = []
+
     if "gameWeek" in data:
         for day in data["gameWeek"]:
-            games.extend(day.get("games", []))
+            if day.get("date") == date_str:
+                games.extend(day.get("games", []))
+
+    elif "games" in data:
+        games = data["games"]
+
     return games
 
 def nhl_play_by_play(game_pk):
@@ -317,9 +322,9 @@ def get_finnish_points(date_str):
 
         for ev in goals:
 
-            scorer = ev["scorer"]
-            a1 = ev["a1"]
-            a2 = ev["a2"]
+            scorer = int(ev["scorer"]) if ev["scorer"] else None
+a1 = int(ev["a1"]) if ev["a1"] else None
+a2 = int(ev["a2"]) if ev["a2"] else None
 
             if scorer in FINNISH_PLAYERS:
                 stats.setdefault(scorer, {"g":0,"a":0})
