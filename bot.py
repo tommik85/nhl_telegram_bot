@@ -130,7 +130,33 @@ def normalize_url(url: str) -> str:
         return urllib.parse.urlunparse((p.scheme, p.netloc, p.path, p.params, urllib.parse.urlencode(q), ""))
     except:
         return url
+        
+def nhl_player_stats():
 
+    url = "https://api-web.nhle.com/v1/skater-stats-leaders/current"
+    r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+    r.raise_for_status()
+
+    data = r.json()
+
+    players = []
+
+    for p in data.get("points", []):
+
+        players.append({
+            "name": p.get("name", {}).get("default"),
+            "team": p.get("teamAbbrev"),
+            "gp": p.get("gamesPlayed"),
+            "g": p.get("goals"),
+            "a": p.get("assists"),
+            "p": p.get("points"),
+            "pm": p.get("plusMinus"),
+            "pim": p.get("penaltyMinutes"),
+            "toi": p.get("timeOnIcePerGame")
+        })
+
+    return players
+    
 def send_telegram(msg: str, chat_id=None):
     if not chat_id:
         chat_id = CHAT_ID
@@ -614,6 +640,54 @@ def handle_command(cmd: str, chat_id):
 
         send_telegram("\n".join(out), chat_id)
         return
+
+    # /top30
+if c == "/top30":
+
+    players = nhl_player_stats()
+
+    if not players:
+        send_telegram("Tilastoja ei saatu.", chat_id)
+        return
+
+    lines = ["🏒 NHL TOP 30 pistemiehet\n"]
+    lines.append("Nimi | GP G A P +/- PIM TOI")
+
+    for i, p in enumerate(players[:30], 1):
+
+        lines.append(
+            f"{i}. {p['name']} ({p['team']}) "
+            f"{p['gp']} {p['g']} {p['a']} {p['p']} "
+            f"{p['pm']} {p['pim']} {p['toi']}"
+        )
+
+    send_telegram("\n".join(lines), chat_id)
+    return
+
+    # /suomipisteet
+if c == "/suomipisteet":
+
+    players = nhl_player_stats()
+
+    fins = [p for p in players if p["name"] in FINNISH_PLAYERS]
+
+    if not fins:
+        send_telegram("Suomalaistilastoja ei löytynyt.", chat_id)
+        return
+
+    lines = ["🇫🇮 Suomalaisten NHL-tilastot\n"]
+    lines.append("Nimi | GP G A P +/- PIM TOI")
+
+    for p in sorted(fins, key=lambda x: -x["p"]):
+
+        lines.append(
+            f"{p['name']} ({p['team']}) "
+            f"{p['gp']} {p['g']} {p['a']} {p['p']} "
+            f"{p['pm']} {p['pim']} {p['toi']}"
+        )
+
+    send_telegram("\n".join(lines), chat_id)
+    return
 
 
     # /suomalaiset
