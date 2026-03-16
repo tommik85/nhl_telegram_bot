@@ -690,25 +690,25 @@ def handle_command(text, chat_id):
     # /top30
     if c == "/top30":
 
-    players = nhl_player_stats()
+        players = nhl_player_stats()
 
-    if not players:
-        send_telegram("Tilastoja ei saatu.", chat_id)
+        if not players:
+            send_telegram("Tilastoja ei saatu.", chat_id)
+            return
+
+        lines = ["🏒 NHL TOP30 pistemiehet\n"]
+        lines.append("Nimi | GP G A P +/- PIM TOI\n")
+
+        for i, p in enumerate(players, 1):
+
+            lines.append(
+                f"{i}. {p['name']} ({p['team']}) "
+                f"{p['gp']} {p['g']} {p['a']} {p['p']} "
+                f"{p['pm']} {p['pim']} {p['toi']}"
+            )
+
+        send_telegram("\n".join(lines), chat_id)
         return
-
-    lines = ["🏒 NHL TOP30 pistemiehet\n"]
-    lines.append("Nimi | GP G A P +/- PIM TOI\n")
-
-    for i, p in enumerate(players, 1):
-
-        lines.append(
-            f"{i}. {p['name']} ({p['team']}) "
-            f"{p['gp']} {p['g']} {p['a']} {p['p']} "
-            f"{p['pm']} {p['pim']} {p['toi']}"
-        )
-
-    send_telegram("\n".join(lines), chat_id)
-    return
 
 
     # /suomipisteet
