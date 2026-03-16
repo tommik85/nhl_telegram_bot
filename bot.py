@@ -601,13 +601,7 @@ def handle_command(cmd: str, chat_id):
         send_telegram("\n".join(out), chat_id)
         return
 
-    # Unknown command
-    send_telegram(
-        "Tuntematon komento.\n"
-        "Kokeile: /games /players <nimi> /standings /ping",
-        chat_id
-    
-# /suomalaiset
+    # /suomalaiset
 if c == "/suomalaiset":
 
     date_str = nhl_effective_date()
@@ -630,7 +624,14 @@ if c == "/suomalaiset":
 
     send_telegram("\n".join(lines), chat_id)
     return
+
+    # Unknown command
+    send_telegram(
+        "Tuntematon komento.\n"
+        "Kokeile: /games /players <nimi> /standings /ping",
+        chat_id
     )
+    
 
 # ---------------------------------------------------------------------------
 # POLL COMMANDS
