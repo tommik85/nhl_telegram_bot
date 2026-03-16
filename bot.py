@@ -323,8 +323,8 @@ def get_finnish_points(date_str):
         for ev in goals:
 
             scorer = int(ev["scorer"]) if ev["scorer"] else None
-a1 = int(ev["a1"]) if ev["a1"] else None
-a2 = int(ev["a2"]) if ev["a2"] else None
+            a1 = int(ev["a1"]) if ev["a1"] else None
+            a2 = int(ev["a2"]) if ev["a2"] else None
 
             if scorer in FINNISH_PLAYERS:
                 stats.setdefault(scorer, {"g":0,"a":0})
