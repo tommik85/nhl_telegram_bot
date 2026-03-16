@@ -180,6 +180,11 @@ def poll_rss():
                 logging.warning(f"RSS bozo {feed_url}: {getattr(feed, 'bozo_exception', None)}")
 
             for entry in feed.entries:
+                
+                pub = getattr(entry, "published", None) or getattr(entry, "updated", None)
+                if not is_recent(pub, hours=48):
+                    continue
+                    
                 link = normalize_url(getattr(entry, "link", None) or "")
                 title = getattr(entry, "title", "").strip()
                 if not link or not title:
