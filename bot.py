@@ -199,24 +199,7 @@ def poll_rss():
             time.sleep(2)
 
 # ---------------------------------------------------------------------------
-# TWITTER / X — A-version (no API key, no snscrape)
-# ---------------------------------------------------------------------------
-def twitter_get_user_id(username: str):
-    try:
-        url = f"https://cdn.syndication.twimg.com/user/by-screen-name/{username}"
-        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
-        if r.status_code != 200:
-            return None
-        data = r.json()
-        return data.get("id_str") or data.get("id")
-    except:
-        return None
-
-def twitter_get_latest_tweets(user_id: str, limit=5):
-    try:
-        url = f"https://cdn.syndication.twimg.com/timeline/profile/{user_id}.json"
-        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
-        if r.status_code != 200:
+# TWITTER / X — A-version (no if r.status_code != 200:# TWITTER / X — A-version (no API key, no snscrape)
             return []
         data = r.json()
         items = data.get("instructions", [])
@@ -424,7 +407,7 @@ def get_player_stats(player_id: int):
     return {}
 
 # ---------------------------------------------------------------------------
-# Games list with Finns (Option A: list all Finns in lineup)
+# Games list with scorers (A-version: pistemiehet; ei erillistä suomalaisriviä)
 # ---------------------------------------------------------------------------
 FINISHED_STATES = {"FINAL", "OFF"}      # OFF = finished joissain feedeissä
 LIVE_STATES     = {"LIVE", "INPROGRESS", "IN_PROGRESS"}
@@ -441,18 +424,52 @@ def filter_games_by_state(games, include_future=False):
             out.append(g)
     return out
 
-def list_finns_in_box(box: dict):
-    names = []
-    for side in ("home", "away"):
-        team = box.get("teams", {}).get(side, {})
-        players = team.get("players", {}) or {}
-        for pdata in players.values():
-            person = pdata.get("person", {})
-            if person.get("nationality", "").upper() == "FIN":
-                nm = person.get("fullName")
-                if nm:
-                    names.append(nm)
-    return names
+def get_game_scorers(game_pk: int):
+    """
+    Hakee ottelun pistemiehet modernin landing-endpointin kautta.
+    Palauttaa rivit kuten:
+       "Barkov 1+2=3"
+       "Tkachuk 1+1=2"
+    """
+    try:
+        url = f"https://api-web.nhle.com/v1/gamecenter/{game_pk}/landing"
+        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+
+        scorers = []
+
+        # Pelaajat löytyvät playerByGameStats -> homeTeam / awayTeam
+        pg = data.get("playerByGameStats", {})
+
+        for side in ("homeTeam", "awayTeam"):
+            side_block = pg.get(side, {})
+            players = []
+
+            for key in ("forwards", "defense", "goalies"):
+                arr = side_block.get(key, [])
+                if isinstance(arr, list):
+                    players.extend(arr)
+
+            for p in players:
+                name = p.get("name", {}).get("default") or p.get("name") or ""
+                g = int(p.get("goals", 0))
+                a = int(p.get("assists", 0))
+                pts = g + a
+                if pts > 0:
+                    scorers.append(f"{name} {g}+{a}={pts}")
+
+        def pts_key(line):
+            # rivin loppuosa on "...=PTS"
+            pts = int(line.split("=")[1])
+            return -pts, line.lower()
+
+        scorers.sort(key=pts_key)
+        return scorers
+
+    except Exception as e:
+        logging.warning(f"landing scorers error: {e}")
+        return []
 
 def get_games_with_finns(date_str: str, include_future: bool = False):
     try:
@@ -489,14 +506,13 @@ def get_games_with_finns(date_str: str, include_future: bool = False):
         else:
             header = f"⏰ {away} @ {home} klo {t}"
 
-        # lisää suomalaiset
+        # Lisää pistemiehet (A-versio)
         game_pk = g.get("id") or g.get("gameId") or g.get("gamePk")
         if game_pk:
             try:
-                box = nhl_boxscore(int(game_pk))
-                finns = list_finns_in_box(box)
-                if finns:
-                    header += "\nSuomalaiset: " + ", ".join(sorted(set(finns)))
+                scorers = get_game_scorers(int(game_pk))
+                if scorers:
+                    header += "\nPistemiehet:\n" + "\n".join("  • " + s for s in scorers)
             except:
                 pass
 
@@ -556,27 +572,23 @@ def fetch_finnish_points_for_date(date_str: str):
 
                     header = f"{name} ({tname}) {g_}+{a_}={p_}, ±{plus}, TOI {toi}"
                     notes = []
-                    if shots not in [None, ""]: notes.append(f"Laukaukset {shots}")
-                    if hits  not in [None, ""]: notes.append(f"Taklaukset {hits}")
-                    if pim   not in [None, "", 0]: notes.append(f"Jäähyt {pim} min")
 
-                    line = f"• {header}"
-                    if notes:
-                        line += "\n  " + " | ".join(notes)
-                    results.append((p_, name, line))
+# ---------------------------------------------------------------------------
+def twitter_get_user_id(username: str):
+    try:
+        url = f"https://cdn.syndication.twimg.com/user/by-screen-name/{username}"
+        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        return data.get("id_str") or data.get("id")
+    except:
+        return None
 
-                # Goalie
-                elif stats.get("goalieStats"):
-                    gk = stats["goalieStats"]
-                    sv = int(gk.get("saves", 0))
-                    sa = int(gk.get("shots") or gk.get("shotsAgainst", 0))
-                    toi = gk.get("toi") or gk.get("timeOnIce") or "00:00"
-                    svpct = round(sv / sa, 3) if sa > 0 else "—"
-                    header = f"{name} ({tname})\nMV: {sv}/{sa} torjuntaa, SV% {svpct}, TOI {toi}"
-                    results.append((0, name, f"• {header}"))
-
-    results.sort(key=lambda x: (-x[0], x[1]))
-    return [r[2] for r in results]
+def twitter_get_latest_tweets(user_id: str, limit=5):
+    try:
+        url = f"https://cdn.syndication.twimg.com/timeline/profile/{user_id}.json"
+        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
 
 # ---------------------------------------------------------------------------
 # Telegram getUpdates (long polling)
@@ -594,6 +606,48 @@ def tg_get_updates(offset):
     except Exception as e:
         logging.warning(f"getUpdates error: {e}")
         return []
+
+# ---------------------------------------------------------------------------
+# Standings (divisions)
+# ---------------------------------------------------------------------------
+def get_standings():
+    """
+    Hakee kuluvan kauden standingsit kaikista divisioonista.
+    Palauttaa dict:
+        { "Atlantic": [ (teamName, PTS, W, L, OT), ... ], ... }
+    """
+    try:
+        now = now_local()
+        year = now.year
+        # Kausi alkaa syksyllä => jos kevät, kausi on esim 20252026
+        if now.month < 7:
+            season = f"{year-1}{year}"
+        else:
+            season = f"{year}{year+1}"
+
+        url = f"https://api-web.nhle.com/v1/standings/{season}"
+        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+
+        divisions = {}
+        for team in data:
+            div = team.get("divisionName", "Unknown")
+            name = team.get("teamName", "Team")
+            pts = team.get("points", 0)
+            w = team.get("wins", 0)
+            l = team.get("losses", 0)
+            ot = team.get("otLosses", 0)
+            divisions.setdefault(div, []).append((name, pts, w, l, ot))
+
+        for div in divisions:
+            divisions[div].sort(key=lambda x: -x[1])
+
+        return divisions
+
+    except Exception as e:
+        logging.warning(f"standings error: {e}")
+        return {}
 
 # ---------------------------------------------------------------------------
 # Telegram command handler
@@ -672,8 +726,24 @@ def handle_command(cmd: str, chat_id):
             send_telegram("📅 NHL-ottelut:\n\n" + "\n\n".join(lines), chat_id)
         return
 
+    # STANDINGS
+    if c.startswith("/standings"):
+        divs = get_standings()
+        if not divs:
+            send_telegram("Ei saatu standings-tietoja.", chat_id)
+            return
+
+        out = "🏆 NHL Standings (Divisions)\n"
+        for div, teams in divs.items():
+            out += f"\n📌 {div}\n"
+            for name, pts, w, l, ot in teams:
+                out += f"  • {name}: {pts}p ({w}-{l}-{ot})\n"
+
+        send_telegram(out, chat_id)
+        return
+
     # UNKNOWN COMMAND
-    send_telegram("Tuntematon komento.\nKokeile: /ping /players /games /suomalaiset /stats /test", chat_id)
+    send_telegram("Tuntematon komento.\nKokeile: /ping /players /games /suomalaiset /stats /test /standings", chat_id)
 
 # ---------------------------------------------------------------------------
 # Poll telegram commands
@@ -735,54 +805,3 @@ def send_nightly_finns_once():
                 set_setting("last_stats_date", target)
                 return
 
-            except Exception as e:
-                if attempt == 4:
-                    send_telegram(f"⚠️ Suomalaisraportti epäonnistui: {e}")
-                time.sleep(4 * (attempt + 1))
-
-# ---------------------------------------------------------------------------
-# MAIN LOOP
-# ---------------------------------------------------------------------------
-def main():
-    init_db()
-    logging.info("NHL Modern Bot is running...")
-
-    last_rss = 0
-    last_tw = 0
-    last_cmd = 0
-
-    state = {"tg_offset": None}
-
-    while True:
-        now_ts = time.time()
-
-        try:
-            # commands
-            if now_ts - last_cmd >= UPDATES_POLL_SECONDS:
-                poll_commands(state)
-                last_cmd = now_ts
-
-            # RSS
-            if now_ts - last_rss >= 200:
-                poll_rss()
-                last_rss = now_ts
-
-            # Twitter
-            if now_ts - last_tw >= 260:
-                poll_twitter()
-                last_tw = now_ts
-
-            # nightly FIN report
-            send_nightly_finns_once()
-
-            time.sleep(1)
-
-        except Exception as e:
-            logging.warning(f"Main loop error: {e}")
-            time.sleep(5)
-
-# ---------------------------------------------------------------------------
-# ENTRYPOINT
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    main()
