@@ -56,8 +56,8 @@ ERROR_BACKOFF_SECONDS = 15
 HTTP_TIMEOUT = 15
 
 # Aika, jolloin lähetetään "viime yön suomalaiset" (24h)
-NIGHTLY_STATS_HOUR = 13
-NIGHTLY_STATS_MINUTE = 47
+NIGHTLY_STATS_HOUR = 14
+NIGHTLY_STATS_MINUTE = 30
 
 # ---------------------------
 # Lokitus
@@ -494,7 +494,6 @@ def send_nightly_finns_once():
 # ---------------------------
 def main():
     init_db()
-    send_test_finns_safe()   # ← TURVALLINEN versio
     logging.info("NHL-uutisvahti käynnissä.")
 
     last_rss = 0
@@ -523,23 +522,6 @@ def main():
         except Exception as e:
             logging.error(f"Pääsilmukan virhe: {e}")
             time.sleep(ERROR_BACKOFF_SECONDS)
-
-def send_test_finns_safe():
-    import time
-    for attempt in range(3):
-        try:
-            date = last_completed_nhl_date()
-            fins = fetch_finnish_points_for_date(date)
-            if fins:
-                send_telegram("🔧 TESTI – Suomalaisraportti\n\n" + "\n\n".join(fins))
-            else:
-                send_telegram("🔧 TESTI – Ei suomalaispisteitä tai API-ongelma.")
-            return
-        except Exception as e:
-            if attempt == 2:
-                send_telegram(f"🔧 TESTI VIRHE (3 yrityksen jälkeen): {e}")
-            else:
-                time.sleep(3)  # odota ja yritä uudelleen
 
 if __name__ == "__main__":
     main()
