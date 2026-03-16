@@ -171,9 +171,7 @@ def nhl_player_stats():
             "g": p.get("goals", 0),
             "a": p.get("assists", 0),
             "p": p.get("points", 0),
-            "pm": p.get("plusMinus", 0),
-            "pim": p.get("penaltyMinutes", 0),
-            "toi": p.get("timeOnIcePerGame", "")
+            
         })
 
     return players
