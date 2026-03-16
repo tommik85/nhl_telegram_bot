@@ -494,7 +494,7 @@ def send_nightly_finns_once():
 # ---------------------------
 def main():
     init_db()
-        send_test_finns()
+    send_test_finns_safe()   # ← TURVALLINEN versio
     logging.info("NHL-uutisvahti käynnissä.")
 
     last_rss = 0
@@ -524,13 +524,16 @@ def main():
             logging.error(f"Pääsilmukan virhe: {e}")
             time.sleep(ERROR_BACKOFF_SECONDS)
 
-def send_test_finns():
-    date = last_completed_nhl_date()
-    fins = fetch_finnish_points_for_date(date)
-    if fins:
-        send_telegram("🔧 TESTI – Suomalaisraportti\n\n" + "\n\n".join(fins))
-    else:
-        send_telegram("🔧 TESTI – Ei suomalaispisteitä / API-ongelma.")
+def send_test_finns_safe():
+    try:
+        date = last_completed_nhl_date()
+        fins = fetch_finnish_points_for_date(date)
+        if fins:
+            send_telegram("🔧 TESTI – Suomalaisraportti\n\n" + "\n\n".join(fins))
+        else:
+            send_telegram("🔧 TESTI – Ei suomalaispisteitä tai API-ongelma.")
+    except Exception as e:
+        send_telegram(f"🔧 TESTI VIRHE: {e}")
 
 if __name__ == "__main__":
     main()
