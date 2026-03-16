@@ -611,6 +611,9 @@ def fetch_finnish_points_for_date(date_str: str):
 # ---------------------------------------------------------------------------
 # Telegram getUpdates (long polling)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Telegram getUpdates (long polling)
+# ---------------------------------------------------------------------------
 def tg_get_updates(offset):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
@@ -822,4 +825,56 @@ def send_nightly_finns_once():
                 send_telegram(msg)
                 set_setting("last_stats_date", target)
                 return
+
+            except Exception as e:
+                if attempt == 4:
+                    send_telegram(f"⚠️ Suomalaisraportti epäonnistui: {e}")
+                time.sleep(4 * (attempt + 1))
+
+# ---------------------------------------------------------------------------
+# MAIN LOOP
+# ---------------------------------------------------------------------------
+def main():
+    init_db()
+    logging.info("NHL Modern Bot is running...")
+
+    last_rss = 0
+    last_tw = 0
+    last_cmd = 0
+
+    state = {"tg_offset": None}
+
+    while True:
+        now_ts = time.time()
+
+        try:
+            # commands
+            if now_ts - last_cmd >= UPDATES_POLL_SECONDS:
+                poll_commands(state)
+                last_cmd = now_ts
+
+            # RSS
+            if now_ts - last_rss >= 200:
+                poll_rss()
+                last_rss = now_ts
+
+            # Twitter
+            if now_ts - last_tw >= 260:
+                poll_twitter()
+                last_tw = now_ts
+
+            # nightly FIN report
+            send_nightly_finns_once()
+
+            time.sleep(1)
+
+        except Exception as e:
+            logging.warning(f"Main loop error: {e}")
+            time.sleep(5)
+
+# ---------------------------------------------------------------------------
+# ENTRYPOINT
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    main()
 
