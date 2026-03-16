@@ -177,6 +177,49 @@ def nhl_player_stats():
         })
 
     return players
+
+def nhl_finnish_stats():
+
+    now = now_local()
+    yr = now.year
+
+    if now.month < 7:
+        season = f"{yr-1}{yr}"
+    else:
+        season = f"{yr}{yr+1}"
+
+    url = "https://api.nhle.com/stats/rest/en/skater/summary"
+
+    params = {
+        "isAggregate": "false",
+        "isGame": "false",
+        "sort": "[{\"property\":\"points\",\"direction\":\"DESC\"}]",
+        "start": 0,
+        "limit": 200,
+        "cayenneExp": f"seasonId={season} and gameTypeId=2 and nationality='FIN'"
+    }
+
+    r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
+    r.raise_for_status()
+
+    data = r.json().get("data", [])
+
+    players = []
+
+    for p in data:
+
+        players.append({
+            "name": p.get("skaterFullName", ""),
+            "team": p.get("teamAbbrevs", ""),
+            "gp": p.get("gamesPlayed", 0),
+            "g": p.get("goals", 0),
+            "a": p.get("assists", 0),
+            "p": p.get("points", 0)
+        })
+
+    players.sort(key=lambda x: -x["p"])
+
+    return players
     
 def send_telegram(msg: str, chat_id=None):
     if not chat_id:
@@ -711,30 +754,25 @@ def handle_command(text, chat_id):
     # /suomipisteet
     if c == "/suomipisteet":
 
-        players = nhl_player_stats()
+        players = nhl_finnish_stats()
 
-        fins = [p for p in players if p["name"] in FINNISH_NAMES]
-
-        if not fins:
+        if not players:
             send_telegram("Suomalaistilastoja ei löytynyt.", chat_id)
             return
 
-        lines = ["🇫🇮 Suomalaisten NHL-tilastot\n"]
-        lines.append("Nimi | GP G A P +/- PIM TOI")
+        lines = ["🇫🇮 Suomalaisten NHL pistepörssi\n"]
 
-        fins = sorted(fins, key=lambda x: -x["p"])
-
-        for p in fins:
+        for i, p in enumerate(players, 1):
 
             lines.append(
-                f"{p['name']} ({p['team']}) "
-                f"{p['gp']} {p['g']} {p['a']} {p['p']} "
-                f"{p['pm']} {p['pim']} {p['toi']}"
+                f"{i}. {p['name']} ({p['team']}) "
+                f"{p['gp']} {p['g']}+{p['a']}={p['p']}"
             )
 
         send_telegram("\n".join(lines), chat_id)
         return
-
+    
+    
 
     # unknown command
     send_telegram(
