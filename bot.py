@@ -391,25 +391,34 @@ def get_team_full_name(team_block):
     return team_block.get("abbrev", "Team")
 
 def nhl_standings():
-    url = "https://api-web.nhle.com/v1/standings-season"
+
+    url = "https://api-web.nhle.com/v1/standings/now"
     r = SESSION.get(url, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
+
     data = r.json()
 
+    rows = data.get("standings", [])
+
     divisions = {}
-    for row in data:
+
+    for row in rows:
+
         div = row.get("divisionName")
         if not div:
             continue
-        team = row.get("teamName", "")
+
+        team = row.get("teamName", {}).get("default", "")
         pts = row.get("points", 0)
         w = row.get("wins", 0)
         l = row.get("losses", 0)
         ot = row.get("otLosses", 0)
+
         divisions.setdefault(div, []).append((team, pts, w, l, ot))
 
     for div in divisions:
         divisions[div].sort(key=lambda x: -x[1])
+
     return divisions
 
 def search_player(query):
