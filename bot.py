@@ -264,13 +264,13 @@ def poll_twitter():
 # =============================================================================
 
 def nhl_schedule(date_str):
-    url = f"https://statsapi.web.nhl.com/api/v1/schedule?date={date_str}"
+    url = f"https://site.api.nhle.com/api/v1/schedule/{date_str}"
     r = SESSION.get(url, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     return r.json()
 
 def nhl_boxscore(pk):
-    url = f"https://statsapi.web.nhl.com/api/v1/game/{pk}/boxscore"
+    url = f"https://api-web.nhle.com/v1/gamecenter/{game_pk}/boxscore"
     r = SESSION.get(url, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     return r.json()
@@ -421,7 +421,7 @@ def get_games_with_finns(date_str):
 
 def search_player_by_name(q):
     try:
-        url=f"https://statsapi.web.nhl.com/api/v1/people/?names={q}"
+        url = f"https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q={query}"
         r=SESSION.get(url,timeout=HTTP_TIMEOUT)
         return r.json().get("people",[])
     except:
