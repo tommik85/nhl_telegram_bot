@@ -143,12 +143,13 @@ def nhl_player_stats():
 
     for p in data.get("points", []):
 
-        name = p.get("playerName", {}).get("default")
-        team = p.get("teamAbbrev")
+        first = p.get("firstName", {}).get("default", "")
+        last = p.get("lastName", {}).get("default", "")
+        name = f"{first} {last}".strip()
 
         players.append({
             "name": name,
-            "team": team,
+            "team": p.get("teamAbbrev", ""),
             "gp": p.get("gamesPlayed", 0),
             "g": p.get("goals", 0),
             "a": p.get("assists", 0),
