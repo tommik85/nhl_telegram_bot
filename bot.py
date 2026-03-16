@@ -525,15 +525,21 @@ def main():
             time.sleep(ERROR_BACKOFF_SECONDS)
 
 def send_test_finns_safe():
-    try:
-        date = last_completed_nhl_date()
-        fins = fetch_finnish_points_for_date(date)
-        if fins:
-            send_telegram("🔧 TESTI – Suomalaisraportti\n\n" + "\n\n".join(fins))
-        else:
-            send_telegram("🔧 TESTI – Ei suomalaispisteitä tai API-ongelma.")
-    except Exception as e:
-        send_telegram(f"🔧 TESTI VIRHE: {e}")
+    import time
+    for attempt in range(3):
+        try:
+            date = last_completed_nhl_date()
+            fins = fetch_finnish_points_for_date(date)
+            if fins:
+                send_telegram("🔧 TESTI – Suomalaisraportti\n\n" + "\n\n".join(fins))
+            else:
+                send_telegram("🔧 TESTI – Ei suomalaispisteitä tai API-ongelma.")
+            return
+        except Exception as e:
+            if attempt == 2:
+                send_telegram(f"🔧 TESTI VIRHE (3 yrityksen jälkeen): {e}")
+            else:
+                time.sleep(3)  # odota ja yritä uudelleen
 
 if __name__ == "__main__":
     main()
