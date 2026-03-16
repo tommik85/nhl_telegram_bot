@@ -606,7 +606,6 @@ def handle_command(cmd: str, chat_id):
         "Tuntematon komento.\n"
         "Kokeile: /games /players <nimi> /standings /ping",
         chat_id
-    )
     
 # /suomalaiset
 if c == "/suomalaiset":
@@ -631,6 +630,7 @@ if c == "/suomalaiset":
 
     send_telegram("\n".join(lines), chat_id)
     return
+    )
 
 # ---------------------------------------------------------------------------
 # POLL COMMANDS
