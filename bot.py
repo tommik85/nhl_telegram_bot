@@ -299,28 +299,28 @@ def twitter_get_latest_tweets(user_id, limit=5):
         return []
 
 def poll_twitter():
-    for handle in TWITTER_USERS:
-        try:
-            key = "twitter_uid_{0}".format(handle)
-            uid = get_setting(key)
-            if not uid:
-                uid = twitter_get_user_id(handle)
-                if uid:
-                    set_setting(key, uid)
-            if not uid:
-                continue
 
-            tweets = twitter_get_latest_tweets(uid)
-            for tw in tweets:
-                tid = tw.get("id_str") or tw.get("id")
-                text = tw.get("full_text") or tw.get("text") or ""
-                url = "https://x.com/{0}/status/{1}".format(handle, tid)
-                if has_seen(url):
+    for handle in TWITTER_USERS:
+
+        try:
+
+            url = f"https://nitter.net/{handle}/rss"
+
+            feed = feedparser.parse(url)
+
+            for entry in feed.entries[:5]:
+
+                title = entry.title
+                link = entry.link
+
+                if has_seen(link):
                     continue
-                send_telegram("X ({0})\n\n{1}\n{2}".format(handle, text, url))
-                mark_seen(url)
+
+                send_telegram(f"X ({handle})\n\n{title}\n{link}")
+                mark_seen(link)
+
         except Exception as e:
-            logging.warning("Twitter error: {0}".format(e))
+            logging.warning(f"Twitter RSS error: {e}")
 
 # ---------------------------------------------------------------------------
 # NHL MODERN ENDPOINTS
@@ -706,6 +706,7 @@ def handle_command(text, chat_id):
             )
 
         send_telegram("\n".join(lines), chat_id)
+        return
 
     # /suomipisteet
     if c == "/suomipisteet":
