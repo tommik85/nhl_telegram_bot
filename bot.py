@@ -43,13 +43,6 @@ RSS_FEEDS = [
     "https://www.iltalehti.fi/rss/nhl.xml",
     "https://www.is.fi/rss/nhl.xml",
     "https://www.nhl.com/rss/news.xml",
-    "https://www.tsn.ca/nhl/rss.xml",
-    "https://www.sportsnet.ca/feed/nhl/",
-    "https://www.espn.com/espn/rss/nhl/news",
-    "https://www.thehockeynews.com/rss",
-    "https://www.cbssports.com/nhl/feeds/rss/",
-    "https://www.sbnation.com/rss/nhl/index.xml",
-    "https://www.yardbarker.com/rss/nhl",
 ]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
