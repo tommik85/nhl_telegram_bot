@@ -56,8 +56,8 @@ ERROR_BACKOFF_SECONDS = 15
 HTTP_TIMEOUT = 15
 
 # Aika, jolloin lähetetään "viime yön suomalaiset" (24h)
-NIGHTLY_STATS_HOUR = 8
-NIGHTLY_STATS_MINUTE = 0
+NIGHTLY_STATS_HOUR = 13
+NIGHTLY_STATS_MINUTE = 47
 
 # ---------------------------
 # Lokitus
