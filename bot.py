@@ -192,14 +192,31 @@ def poll_rss():
                     continue
                 if has_seen(link):
                     continue
-                send_telegram(f"🚨 NHL-UUTINEN\n\n{title}\n{link}")
+                send_telegram("NHL-UUTINEN\n\n{0}\n{1}".format(title, link))
                 mark_seen(link)
         except Exception as e:
-            logging.warning(f"RSS error {feed_url}: {e}")
+            logging.warning("RSS error {0}: {1}".format(feed_url, e))
             time.sleep(2)
 
 # ---------------------------------------------------------------------------
-# TWITTER / X — A-version (no if r.status_code != 200:# TWITTER / X — A-version (no API key, no snscrape)
+# TWITTER / X — A-version (no API key, no snscrape)
+# ---------------------------------------------------------------------------
+def twitter_get_user_id(username: str):
+    try:
+        url = "https://cdn.syndication.twimg.com/user/by-screen-name/{0}".format(username)
+        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        return data.get("id_str") or data.get("id")
+    except:
+        return None
+
+def twitter_get_latest_tweets(user_id: str, limit=5):
+    try:
+        url = "https://cdn.syndication.twimg.com/timeline/profile/{0}.json".format(user_id)
+        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+        if r.status_code != 200:
             return []
         data = r.json()
         items = data.get("instructions", [])
@@ -217,7 +234,7 @@ def poll_rss():
 def poll_twitter():
     for handle in TWITTER_USERS:
         try:
-            key = f"twitter_userid_{handle}"
+            key = "twitter_userid_{0}".format(handle)
             user_id = get_setting(key)
             if not user_id:
                 user_id = twitter_get_user_id(handle)
@@ -229,25 +246,25 @@ def poll_twitter():
                 tid = tw.get("id_str") or tw.get("id")
                 text = tw.get("full_text") or tw.get("text") or ""
                 created = tw.get("created_at")
-                url = f"https://x.com/{handle}/status/{tid}"
+                url = "https://x.com/{0}/status/{1}".format(handle, tid)
                 if not is_recent(created, MAX_HOURS):
                     continue
                 if has_seen(url):
                     continue
-                send_telegram(f"🐦 X — {handle}\n\n{text}\n{url}")
+                send_telegram("X — {0}\n\n{1}\n{2}".format(handle, text, url))
                 mark_seen(url)
         except Exception as e:
-            logging.warning(f"Twitter error {handle}: {e}")
+            logging.warning("Twitter error {0}: {1}".format(handle, e))
 
 # ---------------------------------------------------------------------------
 # MODERN NHL ENDPOINTS (SCHEDULE, BOXSCORE, PLAYER SEARCH)
 # ---------------------------------------------------------------------------
 def nhl_schedule(date_str: str):
     """
-    Moderni päiväkohtainen schedule (api-web.nhle.com).
+    Moderni paivakohtainen schedule (api-web.nhle.com).
     Normalisoidaan muotoon {"dates":[{"games":[...]}]}.
     """
-    url = f"https://api-web.nhle.com/v1/schedule/{date_str}"
+    url = "https://api-web.nhle.com/v1/schedule/{0}".format(date_str)
     r = SESSION.get(url, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     data = r.json()
@@ -263,22 +280,23 @@ def nhl_schedule(date_str: str):
 
 # ---- nationality caching (for Finnish player detection) ----
 def cache_get_nat(player_id: int):
-    return get_setting(f"nat_{player_id}")
+    return get_setting("nat_{0}".format(player_id))
 
 def cache_set_nat(player_id: int, nat: str):
     if nat:
-        set_setting(f"nat_{player_id}", nat)
+        set_setting("nat_{0}".format(player_id), nat)
 
 def resolve_nationality(player_id: int, fallback_name: str = "") -> str:
     """
-    Täydentää pelaajan kansallisuuden search.d3 API:sta,
+    Taydentaa pelaajan kansallisuuden search.d3 API:sta,
     koska modernissa boxscoren datassa nationality voi puuttua.
     """
     cached = cache_get_nat(player_id)
     if cached:
         return cached
     try:
-        url = f"https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q={fallback_name or player_id}"
+        q = fallback_name if fallback_name else str(player_id)
+        url = "https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q={0}".format(q)
         r = SESSION.get(url, timeout=HTTP_TIMEOUT)
         if r.status_code == 200:
             for it in r.json().get("items", []):
@@ -296,7 +314,7 @@ def nhl_boxscore(game_pk: int):
     Moderni boxscore (api-web.nhle.com). Tukee players[] ja playerByGameStats[].
     Normalisoidaan muotoon {"teams":{"home":{...},"away":{...}}}.
     """
-    url = f"https://api-web.nhle.com/v1/gamecenter/{game_pk}/boxscore"
+    url = "https://api-web.nhle.com/v1/gamecenter/{0}/boxscore".format(game_pk)
     r = SESSION.get(url, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     raw = r.json()
@@ -320,7 +338,7 @@ def nhl_boxscore(game_pk: int):
                     nat = resolve_nationality(pid, fullName)
                 sk = p.get("skaterStats") or {}
                 gk = p.get("goalieStats") or {}
-                dict_players[f"ID{pid}"] = {
+                dict_players["ID{0}".format(pid)] = {
                     "person": {"fullName": fullName, "nationality": nat},
                     "stats": {"skaterStats": sk if sk else None, "goalieStats": gk if gk else None},
                 }
@@ -358,7 +376,7 @@ def nhl_boxscore(game_pk: int):
                         "timeOnIce": p.get("toi") or p.get("timeOnIce"),
                     }
 
-                dict_players[f"ID{pid}"] = {
+                dict_players["ID{0}".format(pid)] = {
                     "person": {"fullName": fullName, "nationality": nat},
                     "stats": {"skaterStats": sk, "goalieStats": gk},
                 }
@@ -368,9 +386,9 @@ def nhl_boxscore(game_pk: int):
     return wrapped
 
 def search_player_by_name(query: str):
-    """Player search via search.d3 — palauttaa listan vanhaa muotoa jäljitteleviä dict-olioita."""
+    """Player search via search.d3."""
     try:
-        url = f"https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q={query}"
+        url = "https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q={0}".format(query)
         r = SESSION.get(url, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
         items = r.json().get("items", [])
@@ -388,10 +406,14 @@ def search_player_by_name(query: str):
 
 def get_player_stats(player_id: int):
     """
-    Kausitilastot stats REST -rajapinnasta (laajasti käytössä kausiaggregaatteihin).
+    Kausitilastot stats REST -rajapinnasta (kausiaggregaatit).
     """
     try:
-        url = f"https://api.nhle.com/stats/rest/en/skater/summary?isAggregate=false&isGame=false&start=0&limit=1&cayenneExp=playerId={player_id}%20and%20gameTypeId=2"
+        url = (
+            "https://api.nhle.com/stats/rest/en/skater/summary"
+            "?isAggregate=false&isGame=false&start=0&limit=1"
+            "&cayenneExp=playerId={0}%20and%20gameTypeId=2"
+        ).format(player_id)
         r = SESSION.get(url, timeout=HTTP_TIMEOUT)
         data = r.json()
         rows = data.get("data", [])
@@ -407,9 +429,9 @@ def get_player_stats(player_id: int):
     return {}
 
 # ---------------------------------------------------------------------------
-# Games list with scorers (A-version: pistemiehet; ei erillistä suomalaisriviä)
+# Games list with scorers (A-version: listaa pistemiehet; ei erillista suomalaisrivia)
 # ---------------------------------------------------------------------------
-FINISHED_STATES = {"FINAL", "OFF"}      # OFF = finished joissain feedeissä
+FINISHED_STATES = {"FINAL", "OFF"}      # OFF = finished joissain feedeissa
 LIVE_STATES     = {"LIVE", "INPROGRESS", "IN_PROGRESS"}
 FUTURE_STATES   = {"FUT", "SCHEDULED", "PRE"}
 
@@ -426,26 +448,21 @@ def filter_games_by_state(games, include_future=False):
 
 def get_game_scorers(game_pk: int):
     """
-    Hakee ottelun pistemiehet modernin landing-endpointin kautta.
-    Palauttaa rivit kuten:
-       "Barkov 1+2=3"
-       "Tkachuk 1+1=2"
+    Hakee ottelun pistemiehet landing-endpointin kautta.
+    Palauttaa rivit kuten: 'Barkov 1+2=3'
     """
     try:
-        url = f"https://api-web.nhle.com/v1/gamecenter/{game_pk}/landing"
+        url = "https://api-web.nhle.com/v1/gamecenter/{0}/landing".format(game_pk)
         r = SESSION.get(url, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
         data = r.json()
 
         scorers = []
-
-        # Pelaajat löytyvät playerByGameStats -> homeTeam / awayTeam
         pg = data.get("playerByGameStats", {})
 
         for side in ("homeTeam", "awayTeam"):
             side_block = pg.get(side, {})
             players = []
-
             for key in ("forwards", "defense", "goalies"):
                 arr = side_block.get(key, [])
                 if isinstance(arr, list):
@@ -457,18 +474,18 @@ def get_game_scorers(game_pk: int):
                 a = int(p.get("assists", 0))
                 pts = g + a
                 if pts > 0:
-                    scorers.append(f"{name} {g}+{a}={pts}")
+                    scorers.append("{0} {1}+{2}={3}".format(name, g, a, pts))
 
         def pts_key(line):
-            # rivin loppuosa on "...=PTS"
+            # line format: 'Name G+A=P'
             pts = int(line.split("=")[1])
-            return -pts, line.lower()
+            return (-pts, line.lower())
 
         scorers.sort(key=pts_key)
         return scorers
 
     except Exception as e:
-        logging.warning(f"landing scorers error: {e}")
+        logging.warning("landing scorers error: {0}".format(e))
         return []
 
 def get_games_with_finns(date_str: str, include_future: bool = False):
@@ -492,7 +509,6 @@ def get_games_with_finns(date_str: str, include_future: bool = False):
         hsc = g.get("homeTeam", {}).get("score")
         asc = g.get("awayTeam", {}).get("score")
 
-        # aika Suomeen
         try:
             dt = dateparser.parse(start_utc).astimezone(pytz.timezone(TIMEZONE))
             t = dt.strftime("%H:%M")
@@ -500,13 +516,13 @@ def get_games_with_finns(date_str: str, include_future: bool = False):
             t = "?"
 
         if state in FINISHED_STATES:
-            header = f"🏁 {home} {hsc} – {asc} {away}"
+            header = "{0} {1} – {2} {3}".format(home, hsc, asc, away)
+            header = "FINAL " + header
         elif state in LIVE_STATES:
-            header = f"🔴 LIVE {home} {hsc} – {asc} {away}"
+            header = "LIVE {0} {1} – {2} {3}".format(home, hsc, asc, away)
         else:
-            header = f"⏰ {away} @ {home} klo {t}"
+            header = "{0} @ {1} klo {2}".format(away, home, t)
 
-        # Lisää pistemiehet (A-versio)
         game_pk = g.get("id") or g.get("gameId") or g.get("gamePk")
         if game_pk:
             try:
@@ -558,7 +574,6 @@ def fetch_finnish_points_for_date(date_str: str):
                 name = person.get("fullName", "")
                 stats = pdata.get("stats", {})
 
-                # Skater
                 if stats.get("skaterStats"):
                     s = stats["skaterStats"]
                     g_ = int(s.get("goals", 0))
@@ -570,26 +585,29 @@ def fetch_finnish_points_for_date(date_str: str):
                     hits = s.get("hits")
                     pim = s.get("pim") or s.get("penaltyMinutes")
 
-                    header = f"{name} ({tname}) {g_}+{a_}={p_}, ±{plus}, TOI {toi}"
+                    header = "{0} ({1}) {2}+{3}={4}, ±{5}, TOI {6}".format(name, tname, g_, a_, p_, plus, toi)
                     notes = []
+                    if shots not in [None, ""]: notes.append("Laukaukset {0}".format(shots))
+                    if hits  not in [None, ""]: notes.append("Taklaukset {0}".format(hits))
+                    if pim   not in [None, "", 0]: notes.append("Jäähyt {0} min".format(pim))
 
-# ---------------------------------------------------------------------------
-def twitter_get_user_id(username: str):
-    try:
-        url = f"https://cdn.syndication.twimg.com/user/by-screen-name/{username}"
-        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
-        if r.status_code != 200:
-            return None
-        data = r.json()
-        return data.get("id_str") or data.get("id")
-    except:
-        return None
+                    line = "• " + header
+                    if notes:
+                        line += "\n  " + " | ".join(notes)
+                    results.append((p_, name, line))
 
-def twitter_get_latest_tweets(user_id: str, limit=5):
-    try:
-        url = f"https://cdn.syndication.twimg.com/timeline/profile/{user_id}.json"
-        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+                elif stats.get("goalieStats"):
+                    gk = stats["goalieStats"]
+                    sv = int(gk.get("saves", 0))
+                    sa = int(gk.get("shots") or gk.get("shotsAgainst", 0))
+                    toi = gk.get("toi") or gk.get("timeOnIce") or "00:00"
+                    svpct = round(sv / sa, 3) if sa > 0 else "—"
+                    header = "{0} ({1})\nMV: {2}/{3} torjuntaa, SV% {4}, TOI {5}".format(name, tname, sv, sa, svpct, toi)
+                    results.append((0, name, "• " + header))
 
+    results.sort(key=lambda x: (-x[0], x[1]))
+    return [r[2] for r in results]
+    
 # ---------------------------------------------------------------------------
 # Telegram getUpdates (long polling)
 # ---------------------------------------------------------------------------
