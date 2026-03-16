@@ -43,6 +43,7 @@ RSS_FEEDS = [
     "https://www.iltalehti.fi/rss/nhl.xml",
     "https://www.is.fi/rss/nhl.xml",
     "https://www.nhl.com/rss/news.xml",
+    "https://feeds.yle.fi/uutiset/v1/majorHeadlines/urheilu.rss",
 ]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -142,6 +143,18 @@ def send_telegram(msg: str, chat_id=None):
     except Exception as e:
         logging.warning(f"Telegram error: {e}")
 
+def is_recent(pub_time):
+    try:
+        dt = dateparser.parse(pub_time)
+
+        if not dt.tzinfo:
+            dt = pytz.utc.localize(dt)
+
+        limit = datetime.now(pytz.utc) - timedelta(hours=48)
+        return dt > limit
+    except:
+        return False
+
 def nhl_effective_date():
     """
     NHL effective date (Suomensääntö):
@@ -152,27 +165,60 @@ def nhl_effective_date():
         return (local.date() - timedelta(days=1)).strftime("%Y-%m-%d")
     return local.strftime("%Y-%m-%d")
 
+FINNISH_PLAYERS = {
+    8478402: "Sebastian Aho",
+    8477503: "Mikko Rantanen",
+    8476883: "Aleksander Barkov",
+    8476459: "Patrik Laine",
+    8477934: "Roope Hintz",
+    8478439: "Esa Lindell",
+    8477462: "Miro Heiskanen",
+    8478010: "Kaapo Kakko",
+    8478013: "Joel Armia",
+    8477493: "Teuvo Teräväinen",
+    8477500: "Artturi Lehkonen",
+    8476476: "Erik Haula",
+    8479376: "Anton Lundell",
+    8479314: "Juuso Pärssinen",
+    8479420: "Ukko-Pekka Luukkonen",
+}
+
 # ---------------------------------------------------------------------------
 # RSS (48h filter, duplicate filtered)
 # ---------------------------------------------------------------------------
+
 def poll_rss():
     for feed_url in RSS_FEEDS:
         try:
             feed = feedparser.parse(feed_url)
+
             for entry in feed.entries:
+
                 pub = getattr(entry, "published", None) or getattr(entry, "updated", None)
-                link = normalize_url(getattr(entry, "link", ""))
                 title = getattr(entry, "title", "").strip()
+                link = normalize_url(getattr(entry, "link", ""))
+
                 if not pub or not title or not link:
                     continue
+
+                # 48h filter
+                if not is_recent(pub):
+                    continue
+
+                # YLE NHL filter
+                if "yle.fi" in link:
+                    if "nhl" not in title.lower() and "nhl" not in getattr(entry, "summary", "").lower():
+                        continue
+
                 if has_seen(link):
                     continue
-                send_telegram("NHL-UUTINEN\n\n{0}\n{1}".format(title, link))
-                mark_seen(link)
-        except Exception as e:
-            logging.warning("RSS error: {0}".format(e))
-            time.sleep(2)
 
+                send_telegram(f"🏒 NHL-UUTINEN\n\n{title}\n{link}")
+                mark_seen(link)
+
+        except Exception as e:
+            logging.warning(f"RSS error: {e}")
+            time.sleep(2)
 # ---------------------------------------------------------------------------
 # TWITTER / X — A-version (no API key)
 # ---------------------------------------------------------------------------
@@ -251,6 +297,43 @@ def nhl_play_by_play(game_pk):
     r = SESSION.get(url, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     return r.json()
+
+def get_finnish_points(date_str):
+
+    games = nhl_schedule(date_str)
+    stats = {}
+
+    for g in games:
+
+        game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
+        if not game_pk:
+            continue
+
+        try:
+            pbp = nhl_play_by_play(int(game_pk))
+            goals = extract_goals(pbp)
+        except:
+            continue
+
+        for ev in goals:
+
+            scorer = ev["scorer"]
+            a1 = ev["a1"]
+            a2 = ev["a2"]
+
+            if scorer in FINNISH_PLAYERS:
+                stats.setdefault(scorer, {"g":0,"a":0})
+                stats[scorer]["g"] += 1
+
+            if a1 in FINNISH_PLAYERS:
+                stats.setdefault(a1, {"g":0,"a":0})
+                stats[a1]["a"] += 1
+
+            if a2 in FINNISH_PLAYERS:
+                stats.setdefault(a2, {"g":0,"a":0})
+                stats[a2]["a"] += 1
+
+    return stats
 
 def extract_goals(pbp_json):
     plays = pbp_json.get("plays", [])
@@ -430,7 +513,7 @@ def tg_get_updates(offset):
 # COMMAND HANDLER
 # ---------------------------------------------------------------------------
 def handle_command(cmd: str, chat_id):
-    c = cmd.strip().split()[0].lower()
+    c = cmd.strip().split()[0].lower().split("@")[0]
 
     # /ping
     if c == "/ping":
@@ -524,7 +607,30 @@ def handle_command(cmd: str, chat_id):
         "Kokeile: /games /players <nimi> /standings /ping",
         chat_id
     )
+    
+# /suomalaiset
+if c == "/suomalaiset":
 
+    date_str = nhl_effective_date()
+    stats = get_finnish_points(date_str)
+
+    if not stats:
+        send_telegram("Ei suomalaispisteitä viime yön peleissä.", chat_id)
+        return
+
+    lines = ["🇫🇮 Suomalaisten pisteet viime yön NHL-peleissä:\n"]
+
+    for pid, s in stats.items():
+
+        name = FINNISH_PLAYERS.get(pid, str(pid))
+        g = s["g"]
+        a = s["a"]
+        p = g + a
+
+        lines.append(f"• {name} {g}+{a}={p}")
+
+    send_telegram("\n".join(lines), chat_id)
+    return
 
 # ---------------------------------------------------------------------------
 # POLL COMMANDS
