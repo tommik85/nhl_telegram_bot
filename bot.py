@@ -553,7 +553,7 @@ def tg_get_updates(offset):
 # COMMAND HANDLER
 # ---------------------------------------------------------------------------
 
-   def handle_command(text, chat_id):
+def handle_command(text, chat_id):
 
     c = text.lower().strip()
 
