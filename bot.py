@@ -601,34 +601,36 @@ def handle_command(cmd: str, chat_id):
         send_telegram("\n".join(out), chat_id)
         return
 
+
     # /suomalaiset
-if c == "/suomalaiset":
+    if c == "/suomalaiset":
 
-    date_str = nhl_effective_date()
-    stats = get_finnish_points(date_str)
+        date_str = nhl_effective_date()
+        stats = get_finnish_points(date_str)
 
-    if not stats:
-        send_telegram("Ei suomalaispisteitä viime yön peleissä.", chat_id)
+        if not stats:
+            send_telegram("Ei suomalaispisteitä viime yön peleissä.", chat_id)
+            return
+
+        lines = ["🇫🇮 Suomalaisten pisteet viime yön NHL-peleissä:\n"]
+
+        for pid, s in stats.items():
+
+            name = FINNISH_PLAYERS.get(pid, str(pid))
+            g = s["g"]
+            a = s["a"]
+            p = g + a
+
+            lines.append(f"• {name} {g}+{a}={p}")
+
+        send_telegram("\n".join(lines), chat_id)
         return
 
-    lines = ["🇫🇮 Suomalaisten pisteet viime yön NHL-peleissä:\n"]
-
-    for pid, s in stats.items():
-
-        name = FINNISH_PLAYERS.get(pid, str(pid))
-        g = s["g"]
-        a = s["a"]
-        p = g + a
-
-        lines.append(f"• {name} {g}+{a}={p}")
-
-    send_telegram("\n".join(lines), chat_id)
-    return
 
     # Unknown command
     send_telegram(
         "Tuntematon komento.\n"
-        "Kokeile: /games /players <nimi> /standings /ping",
+        "Kokeile: /games /players <nimi> /standings /suomalaiset /ping",
         chat_id
     )
     
