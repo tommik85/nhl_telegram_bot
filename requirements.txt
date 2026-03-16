@@ -1,2 +1,5 @@
 feedparser
 requests
+pytz
+python-dateutil
+snscrape
