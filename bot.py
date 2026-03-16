@@ -552,142 +552,94 @@ def tg_get_updates(offset):
 # ---------------------------------------------------------------------------
 # COMMAND HANDLER
 # ---------------------------------------------------------------------------
-def handle_command(cmd: str, chat_id):
-    c = cmd.strip().split()[0].lower().split("@")[0]
+
+   def handle_command(text, chat_id):
+
+    c = text.lower().strip()
 
     # /ping
     if c == "/ping":
-        send_telegram("pong", chat_id)
+        send_telegram("Botti toimii 👍", chat_id)
         return
+
 
     # /games
     if c == "/games":
+
         date_str = nhl_effective_date()
         games = nhl_schedule(date_str)
 
         if not games:
-            send_telegram("Ei otteluita.", chat_id)
+            send_telegram("Ei pelejä tänään.", chat_id)
             return
 
-        out_lines = []
+        lines = ["🏒 NHL pelit:\n"]
+
         for g in games:
-            game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
-            if not game_pk:
-                continue
 
-            try:
-                pbp = nhl_play_by_play(int(game_pk))
-                goals = extract_goals(pbp)
-            except:
-                goals = []
+            away = g["awayTeam"]["abbrev"]
+            home = g["homeTeam"]["abbrev"]
 
-            block = format_game_output(g, goals)
-            out_lines.append(block)
+            if g.get("gameState") == "OFF":
+                score = f"{g['awayTeam']['score']} - {g['homeTeam']['score']}"
+            else:
+                score = "vs"
 
-        msg = "📅 NHL-ottelut\n\n" + "\n\n".join(out_lines)
-        send_telegram(msg, chat_id)
+            lines.append(f"{away} {score} {home}")
+
+        send_telegram("\n".join(lines), chat_id)
         return
 
-    # /players <nimi>
-    if c == "/players":
-        parts = cmd.split(maxsplit=1)
+
+    # /players
+    if c.startswith("/players"):
+
+        parts = text.split(" ", 1)
+
         if len(parts) < 2:
-            send_telegram("Käyttö: /players <nimi>", chat_id)
+            send_telegram("Käyttö: /players nimi", chat_id)
             return
 
-        q = parts[1].strip()
-        results = search_player(q)
-        if not results:
-            send_telegram(f"Ei pelaajaa haulla: {q}", chat_id)
+        name = parts[1]
+
+        players = search_players(name)
+
+        if not players:
+            send_telegram("Pelaajaa ei löytynyt.", chat_id)
             return
 
-        p = results[0]
-        pid = p.get("playerId")
-        name = p.get("name")
-        team = p.get("teamName") or p.get("teamAbbrev", "")
+        lines = ["🔎 Pelaajahaku:\n"]
 
-        stats = get_player_stats(pid)
-        if not stats:
-            send_telegram(f"Pelaajaa ei löytynyt tilastoista: {name}", chat_id)
-            return
+        for p in players[:10]:
+            lines.append(f"{p['name']} ({p['team']})")
 
-        g = stats["goals"]
-        a = stats["assists"]
-        pts = stats["points"]
-        gp = stats["games"]
-
-        msg = (
-            f"📌 Pelaaja: {name}\n"
-            f"Joukkue: {team}\n\n"
-            f"Pelatut: {gp}\n"
-            f"Pisteet: {g}+{a}={pts}"
-        )
-        send_telegram(msg, chat_id)
+        send_telegram("\n".join(lines), chat_id)
         return
+
 
     # /standings
     if c == "/standings":
+
         divs = nhl_standings()
+
         if not divs:
             send_telegram("Standings-tietoja ei saatu.", chat_id)
             return
 
-        out = ["🏆 NHL Standings (Divisions):"]
+        lines = ["🏆 NHL divisioonat:\n"]
+
         for div, teams in divs.items():
-            out.append(f"\n{div}")
-            for (team, pts, w, l, ot) in teams:
-                out.append(f" • {team}: {pts}p ({w}-{l}-{ot})")
 
-        send_telegram("\n".join(out), chat_id)
+            lines.append(div)
+
+            for team, pts, w, l, ot in teams:
+
+                lines.append(f"• {team} {pts}p ({w}-{l}-{ot})")
+
+            lines.append("")
+
+        send_telegram("\n".join(lines), chat_id)
         return
-
-    # /top30
-if c == "/top30":
-
-    players = nhl_player_stats()
-
-    if not players:
-        send_telegram("Tilastoja ei saatu.", chat_id)
-        return
-
-    lines = ["🏒 NHL TOP 30 pistemiehet\n"]
-    lines.append("Nimi | GP G A P +/- PIM TOI")
-
-    for i, p in enumerate(players[:30], 1):
-
-        lines.append(
-            f"{i}. {p['name']} ({p['team']}) "
-            f"{p['gp']} {p['g']} {p['a']} {p['p']} "
-            f"{p['pm']} {p['pim']} {p['toi']}"
-        )
-
-    send_telegram("\n".join(lines), chat_id)
-    return
-
-    # /suomipisteet
-if c == "/suomipisteet":
-
-    players = nhl_player_stats()
-
-    fins = [p for p in players if p["name"] in FINNISH_PLAYERS]
-
-    if not fins:
-        send_telegram("Suomalaistilastoja ei löytynyt.", chat_id)
-        return
-
-    lines = ["🇫🇮 Suomalaisten NHL-tilastot\n"]
-    lines.append("Nimi | GP G A P +/- PIM TOI")
-
-    for p in sorted(fins, key=lambda x: -x["p"]):
-
-        lines.append(
-            f"{p['name']} ({p['team']}) "
-            f"{p['gp']} {p['g']} {p['a']} {p['p']} "
-            f"{p['pm']} {p['pim']} {p['toi']}"
-        )
-
-    send_telegram("\n".join(lines), chat_id)
-    return
 
 
     # /suomalaiset
@@ -715,13 +667,71 @@ if c == "/suomipisteet":
         return
 
 
-    # Unknown command
+    # /top30
+    if c == "/top30":
+
+        players = nhl_player_stats()
+
+        if not players:
+            send_telegram("Tilastoja ei saatu.", chat_id)
+            return
+
+        lines = ["🏒 NHL TOP30 pistemiehet\n"]
+        lines.append("Nimi | GP G A P +/- PIM TOI")
+
+        for i, p in enumerate(players[:30], 1):
+
+            lines.append(
+                f"{i}. {p['name']} ({p['team']}) "
+                f"{p['gp']} {p['g']} {p['a']} {p['p']} "
+                f"{p['pm']} {p['pim']} {p['toi']}"
+            )
+
+        send_telegram("\n".join(lines), chat_id)
+        return
+
+
+    # /suomipisteet
+    if c == "/suomipisteet":
+
+        players = nhl_player_stats()
+
+        fins = [p for p in players if p["name"] in FINNISH_NAMES]
+
+        if not fins:
+            send_telegram("Suomalaistilastoja ei löytynyt.", chat_id)
+            return
+
+        lines = ["🇫🇮 Suomalaisten NHL-tilastot\n"]
+        lines.append("Nimi | GP G A P +/- PIM TOI")
+
+        fins = sorted(fins, key=lambda x: -x["p"])
+
+        for p in fins:
+
+            lines.append(
+                f"{p['name']} ({p['team']}) "
+                f"{p['gp']} {p['g']} {p['a']} {p['p']} "
+                f"{p['pm']} {p['pim']} {p['toi']}"
+            )
+
+        send_telegram("\n".join(lines), chat_id)
+        return
+
+
+    # unknown command
     send_telegram(
         "Tuntematon komento.\n"
-        "Kokeile: /games /players <nimi> /standings /suomalaiset /ping",
+        "Komennot:\n"
+        "/games\n"
+        "/players nimi\n"
+        "/standings\n"
+        "/suomalaiset\n"
+        "/top30\n"
+        "/suomipisteet\n"
+        "/ping",
         chat_id
-    )
-    
+    ) 
 
 # ---------------------------------------------------------------------------
 # POLL COMMANDS
