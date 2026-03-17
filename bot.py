@@ -776,6 +776,7 @@ def handle_command(text, chat_id):
 
 
 # /standings
+# /standings
 if c == "/standings":
 
     confs = nhl_standings()
@@ -836,8 +837,9 @@ if c == "/standings":
             )
 
         send_telegram("\n".join(wc_lines), chat_id)
-    return
 
+    # HUOM: tämä return päättää vain /standings-haaran handle_command-funktiossa
+    return
 
     # /suomalaiset
     if c == "/suomalaiset":
