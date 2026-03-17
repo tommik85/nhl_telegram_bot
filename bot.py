@@ -831,8 +831,7 @@ if c == "/standings":
             )
 
         send_telegram("\n".join(wc_lines), chat_id)
-
-    return
+        return
 
 
     # /suomalaiset
