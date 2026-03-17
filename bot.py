@@ -853,32 +853,68 @@ def handle_command(text, chat_id):
     if c == "/suomalaiset":
 
         date_str = nhl_effective_date()
-        result = get_finnish_points(date_str)
+        games = nhl_schedule(date_str)
 
-        # Taaksepäin yhteensopivuus jos vanha versio palauttaa vain stats
-        if isinstance(result, tuple) and len(result) == 2:
-            stats, name_map = result
-        else:
-            stats, name_map = result, {}
+        finnish_names = [
+            "Aho", "Rantanen", "Barkov", "Laine", "Hintz", "Lindell", "Heiskanen",
+            "Kakko", "Armia", "Teräväinen", "Lehkonen", "Haula", "Lundell",
+            "Pärssinen", "Luukkonen", "Nousiainen", "Heponiemi", "Björninen",
+            "Tolvanen", "Granlund", "Puljujärvi", "Kempe", "Määttä", "Kähkönen",
+            "Saros", "Räty", "Kapanen", "Pakkanen", "Niku", "Ojamäki",
+        ]
+        finnish_points = {}  # "Pelaaja" -> g,a
 
-        if not stats:
+        for g in games:
+
+            game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
+            if not game_pk:
+                continue
+
+            try:
+                pbp = nhl_play_by_play(int(game_pk))
+                goals = extract_goals(pbp)
+            except:
+                continue
+
+            # Käytetään samaa funktiota kuin /games
+            pts = calculate_points(goals)
+
+            # Käydään jokaisen pelaajan pisteet läpi
+            for pid, res in pts.items():
+                name = get_player_name(pid)
+
+                # Suomalaisen tunnistus nimen perusteella
+                if any(suomi in name for suomi in finnish_names):
+
+                    gnum = res["g"]
+                    anum = res["a"]
+
+                    if name not in finnish_points:
+                        finnish_points[name] = {"g": 0, "a": 0}
+
+                    finnish_points[name]["g"] += gnum
+                    finnish_points[name]["a"] += anum
+
+        if not finnish_points:
             send_telegram("Ei suomalaispisteitä viime yön peleissä.", chat_id)
             return
 
-        # Järjestä pisteiden mukaan
-        ordered = sorted(
-            ((pid, v["g"], v["a"], v["g"] + v["a"]) for pid, v in stats.items()),
-            key=lambda x: (-x[3], -x[1], name_map.get(x[0], FINNISH_PLAYERS.get(x[0], str(x[0]))))
+        # Järjestetään pistemäärän mukaan
+        lines = ["🇫🇮 Suomalaisten pisteet viime yön NHL-peleissä:\n"]
+
+        sorted_finns = sorted(
+            finnish_points.items(),
+            key=lambda x: -(x[1]["g"] + x[1]["a"])
         )
 
-        lines = ["🇫🇮 Suomalaisten pisteet viime yön NHL-peleissä:\n"]
-        for pid, g, a, p in ordered:
-            name = name_map.get(pid) or FINNISH_PLAYERS.get(pid, f"Pelaaja {pid}")
-            lines.append(f"• {name}: {g}+{a}={p}")
+        for name, res in sorted_finns:
+            g = res["g"]
+            a = res["a"]
+            lines.append(f"• {name}: {g}+{a}={g+a}")
 
         send_telegram("\n".join(lines), chat_id)
         return
-        
+    
     # /top30
     if c == "/top30":
 
