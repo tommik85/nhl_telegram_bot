@@ -220,31 +220,7 @@ def nhl_finnish_stats():
     players.sort(key=lambda x: -x["p"])
 
     return players
-
-def _strip_accents(s: str) -> str:
-    """Poistaa aksentit/diakriitit nimitunnistusta varten."""
-    if not isinstance(s, str):
-        return ""
-    return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
-
-def _is_finn_by_name(full_name: str, finnish_lastname_hints) -> bool:
-    """
-    Palauttaa True jos 'full_name' sisältää jonkin 'finnish_lastname_hints' osuman.
-    Vertailu on pieni-/suuri-kirjain riippumaton ja aksenttitolerantti.
-    """
-    nm = full_name.strip()
-    if not nm:
-        return False
-    nm_lc = nm.lower()
-    nm_nfkd = _strip_accents(nm).lower()
-    for hint in finnish_lastname_hints:
-        h = hint.lower()
-        h_nfkd = _strip_accents(h).lower()
-        if h in nm_lc or h_nfkd in nm_nfkd:
-            return True
-    return False
-
-
+    
 def send_telegram(msg: str, chat_id=None):
     if not chat_id:
         chat_id = CHAT_ID
@@ -873,17 +849,12 @@ def handle_command(text, chat_id):
         send_telegram("\n".join(lines), chat_id)
         return
 
-    # /suomalaiset — ottelukohtainen suomalaisraportti nimitunnistuksella (ei ID-listaa)
+    # /suomalaiset
     if c == "/suomalaiset":
 
         date_str = nhl_effective_date()
         games = nhl_schedule(date_str)
 
-        if not games:
-            send_telegram("Ei NHL-pelejä viime yönä.", chat_id)
-            return
-
-        # Käytetään sinun yllä määriteltyä listaa (pidä tämä listasi ennallaan)
         finnish_names = [
             "Aho", "Rantanen", "Barkov", "Laine", "Hintz", "Lindell", "Heiskanen",
             "Kakko", "Armia", "Teräväinen", "Lehkonen", "Haula", "Lundell", "Helenius",
@@ -892,130 +863,55 @@ def handle_command(text, chat_id):
             "Tolvanen", "Granlund", "Luostarinen", "Maccelli", "Määttä", "Kotkaniemi",
             "Saros", "Räty", "Kapanen", "Kiviranta", "Jokiharju", "Mikkola",
         ]
-
-        lines = ["🇫🇮 Suomalaisten suoritukset viime yön NHL-peleissä:\n"]
-        any_found = False
+        finnish_points = {}  # "Pelaaja" -> g,a
 
         for g in games:
+
             game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
             if not game_pk:
                 continue
 
-            # Hae boxscore
             try:
-                url = f"https://api-web.nhle.com/v1/gamecenter/{game_pk}/boxscore"
-                bs = SESSION.get(url, timeout=HTTP_TIMEOUT).json()
-            except Exception as e:
-                logging.warning(f"/suomalaiset: boxscore fetch failed for {game_pk}: {e}")
+                pbp = nhl_play_by_play(int(game_pk))
+                goals = extract_goals(pbp)
+            except:
                 continue
 
-            # Rakennetaan otsikko
-            home = get_team_full_name(g.get("homeTeam", {}))
-            away = get_team_full_name(g.get("awayTeam", {}))
-            hsc = g.get("homeTeam", {}).get("score")
-            asc = g.get("awayTeam", {}).get("score")
-            header = f"{home} {hsc}–{asc} {away}" if (hsc is not None and asc is not None) else f"{away} @ {home}"
+            # Käytetään samaa funktiota kuin /games
+            pts = calculate_points(goals)
 
-            game_player_lines = []
+            # Käydään jokaisen pelaajan pisteet läpi
+            for pid, res in pts.items():
+                name = get_player_name(pid)
 
-            # Pieni apuri: kaivetaan pelaaja-ID:t kummallekin joukkueelle joustavasti
-            def _extract_ids(team_block: dict):
-                ids = []
-                if not isinstance(team_block, dict):
-                    return ids
-                # Uudempi schema
-                ids.extend(team_block.get("skaters", []) or [])
-                ids.extend(team_block.get("goalies", []) or [])
-                # Vanhempi schema: roster -> eri ryhmät
-                roster = team_block.get("roster", {})
-                if isinstance(roster, dict):
-                    for group in roster.values():
-                        if isinstance(group, list):
-                            for item in group:
-                                # item voi olla suoraan int tai dict
-                                if isinstance(item, int):
-                                    ids.append(item)
-                                elif isinstance(item, dict):
-                                    pid = item.get("id") or item.get("playerId")
-                                    if pid is not None:
-                                        ids.append(pid)
-                # Poista duplikaatit säilyttäen järjestystä
-                seen = set()
-                uniq = []
-                for pid in ids:
-                    try:
-                        ipid = int(pid)
-                    except:
-                        continue
-                    if ipid not in seen:
-                        seen.add(ipid)
-                        uniq.append(ipid)
-                return uniq
+                # Suomalaisen tunnistus nimen perusteella
+                if any(suomi in name for suomi in finnish_names):
 
-            home_ids = _extract_ids(bs.get("homeTeam", {}))
-            away_ids = _extract_ids(bs.get("awayTeam", {}))
+                    gnum = res["g"]
+                    anum = res["a"]
 
-            playerById = bs.get("playerById", {}) or {}
+                    if name not in finnish_points:
+                        finnish_points[name] = {"g": 0, "a": 0}
 
-            def _full_name(pobj: dict) -> str:
-                fn = (pobj.get("firstName", {}) or {}).get("default", "") or ""
-                ln = (pobj.get("lastName", {}) or {}).get("default", "") or ""
-                return (fn + " " + ln).strip()
+                    finnish_points[name]["g"] += gnum
+                    finnish_points[name]["a"] += anum
 
-            def _append_skater_line(pobj: dict):
-                stats = pobj.get("skaterStats", {}) or {}
-                gnum = stats.get("goals", 0)
-                anum = stats.get("assists", 0)
-                shots = stats.get("shots", 0)
-                pim = stats.get("pim", 0)
-                pm = stats.get("plusMinus", 0)
-                toi = stats.get("timeOnIce", "0:00")
-                return f" • {_full_name(pobj)}: {gnum}+{anum}={gnum+anum}, Lk {shots}, +/- {pm}, J {pim}, TOI {toi}"
-
-            def _append_goalie_line(pobj: dict):
-                gstats = pobj.get("goalieStats", {}) or {}
-                saves = gstats.get("saves", 0)
-                shotsA = gstats.get("shots", 0) or gstats.get("shotsAgainst", 0)
-                ga = gstats.get("goalsAgainst", 0)
-                toi = gstats.get("timeOnIce", "0:00")
-                # save% voi olla jo valmiina tai lasketaan varalta
-                svpct = gstats.get("savePctg")
-                if svpct is None:
-                    try:
-                        svpct = saves / shotsA if shotsA else 0.0
-                    except:
-                        svpct = 0.0
-                return f" • {_full_name(pobj)} (G): {saves}/{shotsA} torj. ({svpct:.3f}), GA {ga}, TOI {toi}"
-
-            # Käy läpi molempien joukkueiden pelaajat
-            for pid in home_ids + away_ids:
-                pobj = playerById.get(str(pid), {}) or {}
-                name = _full_name(pobj)
-                if not name:
-                    continue
-
-                # Nimitunnistus (aksenttitoleranssi)
-                if not _is_finn_by_name(name, finnish_names):
-                    continue
-
-                # Tulosta skater- tai goalie-rivi
-                if "skaterStats" in pobj and pobj.get("skaterStats"):
-                    game_player_lines.append(_append_skater_line(pobj))
-                elif "goalieStats" in pobj and pobj.get("goalieStats"):
-                    game_player_lines.append(_append_goalie_line(pobj))
-                else:
-                    # Varmistusrivi, jos stats puuttuu (harvinaista)
-                    game_player_lines.append(f" • {name}: ei tilastoja saatavilla")
-
-            if game_player_lines:
-                any_found = True
-                lines.append(f"🏒 {header}")
-                lines.extend(game_player_lines)
-                lines.append("")
-
-        if not any_found:
-            send_telegram("Ei suomalaispelaajien tilastoja viime yön peleistä.", chat_id)
+        if not finnish_points:
+            send_telegram("Ei suomalaispisteitä viime yön peleissä.", chat_id)
             return
+
+        # Järjestetään pistemäärän mukaan
+        lines = ["🇫🇮 Suomalaisten pisteet viime yön NHL-peleissä:\n"]
+
+        sorted_finns = sorted(
+            finnish_points.items(),
+            key=lambda x: -(x[1]["g"] + x[1]["a"])
+        )
+
+        for name, res in sorted_finns:
+            g = res["g"]
+            a = res["a"]
+            lines.append(f"• {name}: {g}+{a}={g+a}")
 
         send_telegram("\n".join(lines), chat_id)
         return
