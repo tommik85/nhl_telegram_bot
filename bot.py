@@ -616,7 +616,7 @@ def format_game_output(game, goal_events):
         header = "{0} @ {1} klo {2}".format(away, home, t)
 
     if goal_events:
-    lines = ["Maalit:"]
+        lines = ["Maalit:"]
     for ev in goal_events:
         scorer = get_player_name(ev["scorer"])
         a1 = get_player_name(ev["a1"]) if ev["a1"] else None
