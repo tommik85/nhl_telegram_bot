@@ -435,15 +435,74 @@ def extract_goals(pbp_json):
     goals = []
     for p in plays:
         if p.get("typeDescKey") == "goal":
-            d = p.get("details", {})
+            d = p.get("details", {}) or {}
+
+            # --- YV / AV tunnistus ---
+            strength_val = (d.get("strength") or "").upper()  # esim. 'PPG', 'SHG', 'EVG', joskus 'PP'
+            is_pp = False
+            is_sh = False
+
+            # Suorat boolean-avaimet (jos API palauttaa ne)
+            try:
+                if "powerPlay" in d:
+                    is_pp = bool(d.get("powerPlay"))
+                if "shortHanded" in d:
+                    is_sh = bool(d.get("shortHanded"))
+            except:
+                pass
+
+            # Fallback strength-kentästä
+            if not is_pp and strength_val in ("PP", "PPG", "POWER PLAY"):
+                is_pp = True
+            if not is_sh and strength_val in ("SH", "SHG", "SHORT HANDED", "SHORT-HANDED"):
+                is_sh = True
+
+            # --- Tyhjään maaliin (EN) ---
+            # API on käyttänyt mm. 'emptyNet' / 'isEmptyNet', joskus myös 'EN' osana strength-merkintää.
+            is_en = False
+            try:
+                if "emptyNet" in d:
+                    is_en = bool(d.get("emptyNet"))
+                elif "isEmptyNet" in d:
+                    is_en = bool(d.get("isEmptyNet"))
+            except:
+                pass
+            if not is_en and strength_val in ("EN", "EMPTY NET"):
+                is_en = True
+
+            period_desc = p.get("periodDescriptor", {}) or {}
             goals.append({
                 "time": p.get("timeInPeriod", "?"),
-                "period": p.get("periodDescriptor", {}).get("number", 0),
+                "period": period_desc.get("number", 0),
+                "periodType": period_desc.get("periodType", ""),  # 'REG', 'OT', 'SO' tms.
                 "scorer": d.get("scoringPlayerId"),
                 "a1": d.get("assist1PlayerId"),
-                "a2": d.get("assist2PlayerId")
+                "a2": d.get("assist2PlayerId"),
+                "yv": is_pp,
+                "av": is_sh,
+                "en": is_en,
             })
     return goals
+
+def format_period_label(period_num, period_type):
+    """
+    Palauttaa suomenkielisen erämerkinnän:
+    - 1/2/3: '1. erä', '2. erä', '3. erä'
+    - Jatkoaika: 'JA'
+    - Voittolaukauskisa: 'VL'
+    - fallback: 'Erä {n}'
+    """
+    pt = (period_type or "").upper()
+    if pt == "OT":
+        return "JA"
+    if pt == "SO":
+        return "VL"
+    if isinstance(period_num, int) and 1 <= period_num <= 3:
+        return f"{period_num}. erä"
+    if period_num:
+        return f"Erä {period_num}"
+    return "Erä"
+``
 
 def get_player_name(player_id):
     try:
@@ -558,42 +617,44 @@ def format_game_output(game, goal_events):
         header = "{0} @ {1} klo {2}".format(away, home, t)
 
     if goal_events:
-        lines = ["Maalit:"]
-        for ev in goal_events:
-            scorer = get_player_name(ev["scorer"])
-            a1 = get_player_name(ev["a1"]) if ev["a1"] else None
-            a2 = get_player_name(ev["a2"]) if ev["a2"] else None
+    lines = ["Maalit:"]
+    for ev in goal_events:
+        scorer = get_player_name(ev["scorer"])
+        a1 = get_player_name(ev["a1"]) if ev["a1"] else None
+        a2 = get_player_name(ev["a2"]) if ev["a2"] else None
 
-            if a1 and a2:
-                assist = "{0}, {1}".format(a1, a2)
-            elif a1:
-                assist = a1
-            else:
-                assist = ""
+        # Syöttäjät
+        if a1 and a2:
+            assist = f"{a1}, {a2}"
+        elif a1:
+            assist = a1
+        else:
+            assist = ""
 
-            if assist:
-                lines.append(" • {0} {1} ({2})".format(ev["time"], scorer, assist))
-            else:
-                lines.append(" • {0} {1}".format(ev["time"], scorer))
+        # Erä + kellonaika
+        period_lbl = format_period_label(ev.get("period"), ev.get("periodType"))
+        prefix = f"{period_lbl} {ev.get('time','?')}"
 
-        header += "\n" + "\n".join(lines)
+        # Tagit (YV/AV/EN)
+        tags = []
+        if ev.get("yv"):
+            tags.append("YV")
+        if ev.get("av"):
+            tags.append("AV")
+        if ev.get("en"):
+            tags.append("EN")
 
-    pts = calculate_points(goal_events)
-    if pts:
-        lines = ["Pistemiehet:"]
-        arr = []
-        for pid, res in pts.items():
-            g = res["g"]
-            a = res["a"]
-            p = g + a
-            name = get_player_name(pid)
-            arr.append((p, name, g, a))
-        arr.sort(key=lambda x: (-x[0], x[1]))
-        for p, name, g, a in arr:
-            lines.append(" • {0} {1}+{2}={3}".format(name, g, a, p))
-        header += "\n\n" + "\n".join(lines)
+        tag_str = ""
+        if tags:
+            tag_str = " (" + ", ".join(tags) + ")"
 
-    return header
+        # Rivi
+        if assist:
+            lines.append(f" • {prefix} {scorer} ({assist}){tag_str}")
+        else:
+            lines.append(f" • {prefix} {scorer}{tag_str}")
+
+    header += "\n" + "\n".join(lines)
 
 # ---------------------------------------------------------------------------
 # TELEGRAM POLLING
