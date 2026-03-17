@@ -406,6 +406,65 @@ def build_name_map(pbp_json):
             name_map[int(pid)] = (fn + " " + ln).strip()
     return name_map
 
+def search_player_fallback_full(query):
+
+    try:
+        # 🔍 1. Hae pelaaja search API:sta
+        url = "https://search.d3.nhle.com/api/v1/search/player"
+        params = {"q": query}
+
+        r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
+        if r.status_code != 200:
+            return []
+
+        data = r.json()
+        results = []
+
+        for p in data:
+
+            player_id = p.get("playerId")
+            name = p.get("name")
+
+            if not player_id:
+                continue
+
+            # 📊 2. Hae statsit
+            stats = get_player_stats(player_id)
+
+            if stats:
+                results.append({
+                    "id": player_id,
+                    "name": name,
+                    "team": "",
+                    "gp": stats.get("games", 0),
+                    "g": stats.get("goals", 0),
+                    "a": stats.get("assists", 0),
+                    "p": stats.get("points", 0),
+                    "pm": 0,
+                    "pim": 0,
+                    "toi": ""
+                })
+            else:
+                # fallback ilman statseja (harvinainen)
+                results.append({
+                    "id": player_id,
+                    "name": name,
+                    "team": "",
+                    "gp": 0,
+                    "g": 0,
+                    "a": 0,
+                    "p": 0,
+                    "pm": 0,
+                    "pim": 0,
+                    "toi": ""
+                })
+
+        return results
+
+    except Exception as e:
+        logging.warning(f"Fallback FULL error: {e}")
+        return []
+
 
 def get_finnish_points(date_str):
 
@@ -847,6 +906,10 @@ def handle_command(text, chat_id):
         query = parts[1]
 
         players = search_players_full(query)
+
+        # 🔥 jos ei löydy stats endpointista → käytä full fallbackia
+        if not players:
+            players = search_player_fallback_full(query)
 
         if not players:
             send_telegram("Pelaajaa ei löytynyt.", chat_id)
