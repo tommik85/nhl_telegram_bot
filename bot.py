@@ -775,64 +775,64 @@ def handle_command(text, chat_id):
         return
 
 
-        if c == "/standings":
+if c == "/standings":
 
-        confs = nhl_standings()
+    confs = nhl_standings()
 
-        # Käydään konferenssit yksi kerrallaan
-        for conf_name, conf_data in confs.items():
+    # Käydään konferenssit yksi kerrallaan
+    for conf_name, conf_data in confs.items():
 
-            send_telegram(f"🏆 {conf_name} Conference", chat_id)
+        send_telegram(f"🏆 {conf_name} Conference", chat_id)
 
-            divs = conf_data["divisions"]
-            wc_list = []
+        divs = conf_data["divisions"]
+        wc_list = []
 
-            # 1) Divisioonat
-            for div_name, teams in divs.items():
+        # 1) Divisioonat
+        for div_name, teams in divs.items():
 
-                lines = [f"📍 {div_name} Division\n"]
+            lines = [f"📍 {div_name} Division\n"]
 
-                # top-3 = playoff-paikat
-                for i, t in enumerate(teams):
+            # top-3 = playoff-paikat
+            for i, t in enumerate(teams):
 
-                    star = "⭐" if i < 3 else ""
-                    streak = t["streak"]
-                    l10w, l10l, l10ot = t["l10"]
-
-                    # vire-indikaattori
-                    emoji_vire = ""
-                    if l10w >= 7:
-                        emoji_vire = "🔥"
-                    elif l10l >= 7:
-                        emoji_vire = "❄️"
-
-                    lines.append(
-                        f"{star} {t['team']} — {t['pts']}p ({t['w']}-{t['l']}-{t['ot']}) | "
-                        f"GF-GA {t['gf']}-{t['ga']} ({t['diff']:+}) | "
-                        f"P% {t['p_pct']*100:.1f}% | "
-                        f"L10 {l10w}-{l10l}-{l10ot} | Streak {streak} {emoji_vire}"
-                    )
-
-                    if i >= 3:
-                        wc_list.append(t)
-
-                send_telegram("\n".join(lines), chat_id)
-
-            # 2) Wildcard – kaksi parasta koko konferenssista divisioonarajojen jälkeen
-            wc_list.sort(key=lambda x: -x["pts"])
-            wc_top = wc_list[:2]
-
-            wc_lines = ["🎟 Wildcard-paikat:\n"]
-            for t in wc_top:
+                star = "⭐" if i < 3 else ""
+                streak = t["streak"]
                 l10w, l10l, l10ot = t["l10"]
-                wc_lines.append(
-                    f"• {t['team']} — {t['pts']}p | "
-                    f"L10 {l10w}-{l10l}-{l10ot} | Diff {t['diff']:+}"
+
+                # vire-indikaattori
+                emoji_vire = ""
+                if l10w >= 7:
+                    emoji_vire = "🔥"
+                elif l10l >= 7:
+                    emoji_vire = "❄️"
+
+                lines.append(
+                    f"{star} {t['team']} — {t['pts']}p ({t['w']}-{t['l']}-{t['ot']}) | "
+                    f"GF-GA {t['gf']}-{t['ga']} ({t['diff']:+}) | "
+                    f"P% {t['p_pct']*100:.1f}% | "
+                    f"L10 {l10w}-{l10l}-{l10ot} | Streak {streak} {emoji_vire}"
                 )
 
-            send_telegram("\n".join(wc_lines), chat_id)
+                if i >= 3:
+                    wc_list.append(t)
 
-        return
+            send_telegram("\n".join(lines), chat_id)
+
+        # 2) Wildcard – kaksi parasta koko konferenssista divisioonarajojen jälkeen
+        wc_list.sort(key=lambda x: -x["pts"])
+        wc_top = wc_list[:2]
+
+        wc_lines = ["🎟 Wildcard-paikat:\n"]
+        for t in wc_top:
+            l10w, l10l, l10ot = t["l10"]
+            wc_lines.append(
+                f"• {t['team']} — {t['pts']}p | "
+                f"L10 {l10w}-{l10l}-{l10ot} | Diff {t['diff']:+}"
+            )
+
+        send_telegram("\n".join(wc_lines), chat_id)
+
+    return
 
 
     # /suomalaiset
