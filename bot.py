@@ -680,7 +680,7 @@ def handle_command(text, chat_id):
 
 
     # /games
-   
+    # /games
     if c == "/games":
 
         date_str = nhl_effective_date()
@@ -690,25 +690,27 @@ def handle_command(text, chat_id):
             send_telegram("Ei pelejä tänään.", chat_id)
             return
 
+        lines = ["🏒 NHL pelit:\n"]
+
         for g in games:
 
             game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
             if not game_pk:
                 continue
 
-            # Hae PBP
+            # Hae play-by-play
             try:
                 pbp = nhl_play_by_play(int(game_pk))
                 goals = extract_goals(pbp)
             except:
                 goals = []
 
-            # Muotoile kooste tälle pelille
-            msg = "🏒 NHL ottelu\n\n" + format_game_output(g, goals)
+            # Muotoile koko otteluraportti
+            out = format_game_output(g, goals)
+            lines.append(out)
+            lines.append("")  # tyhjä rivi väliin
 
-            # Lähetä erillinen viesti
-            send_telegram(msg, chat_id)
-
+        send_telegram("\n".join(lines), chat_id)
         return
 
 
