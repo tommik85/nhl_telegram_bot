@@ -592,13 +592,47 @@ def get_finnish_player_ids_for_season():
     return fins
 
 def search_player(query):
+
+    now = now_local()
+    yr = now.year
+
+    if now.month < 7:
+        season = f"{yr-1}{yr}"
+    else:
+        season = f"{yr}{yr+1}"
+
+    url = "https://api.nhle.com/stats/rest/en/skater/summary"
+
+    params = {
+        "isAggregate": "false",
+        "isGame": "false",
+        "sort": "[{\"property\":\"points\",\"direction\":\"DESC\"}]",
+        "start": 0,
+        "limit": 500,
+        "cayenneExp": f"seasonId={season} and gameTypeId=2"
+    }
+
     try:
-        url = "https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q={0}".format(query)
-        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+        r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
-        return r.json().get("items", [])
+        data = r.json().get("data", [])
     except:
         return []
+
+    query = query.lower()
+
+    results = []
+
+    for p in data:
+        name = p.get("skaterFullName", "").lower()
+
+        if query in name:
+            results.append({
+                "name": p.get("skaterFullName", ""),
+                "team": p.get("teamAbbrevs", "")
+            })
+
+    return results
 
 def get_player_stats(player_id):
     now = now_local()
