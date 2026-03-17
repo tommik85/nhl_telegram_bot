@@ -56,13 +56,6 @@ from urllib3.util.retry import Retry
 
 def make_session():
     s = requests.Session()
-
-    # 🔥 LISÄÄ TÄMÄ
-    s.headers.update({
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json"
-    })
-    
     retries = Retry(
         total=5,
         backoff_factor=1,
@@ -412,53 +405,6 @@ def build_name_map(pbp_json):
         if pid and (fn or ln):
             name_map[int(pid)] = (fn + " " + ln).strip()
     return name_map
-
-def search_player_fallback_full(query):
-
-    try:
-        # 🔥 käytetään roster endpointtia (toimii varmasti)
-        now = now_local()
-        yr = now.year
-        season = f"{yr-1}{yr}" if now.month < 7 else f"{yr}{yr+1}"
-
-        url = f"https://api-web.nhle.com/v1/skaters/{season}"
-        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
-
-        if r.status_code != 200:
-            return []
-
-        data = r.json()
-
-        query = query.lower().strip()
-        results = []
-
-        for p in data:
-
-            name = (
-                p.get("firstName", {}).get("default", "") + " " +
-                p.get("lastName", {}).get("default", "")
-            ).strip()
-
-            if query in name.lower():
-
-                results.append({
-                    "id": p.get("playerId"),
-                    "name": name,
-                    "team": p.get("teamAbbrev", ""),
-                    "gp": p.get("gamesPlayed", 0),
-                    "g": p.get("goals", 0),
-                    "a": p.get("assists", 0),
-                    "p": p.get("points", 0),
-                    "pm": p.get("plusMinus", 0),
-                    "pim": p.get("penaltyMinutes", 0),
-                    "toi": p.get("timeOnIcePerGame", "")
-                })
-
-        return results
-
-    except Exception as e:
-        logging.warning(f"Fallback FULL error: {e}")
-        return []
 
 
 def get_finnish_points(date_str):
@@ -901,10 +847,6 @@ def handle_command(text, chat_id):
         query = parts[1]
 
         players = search_players_full(query)
-
-        # 🔥 jos ei löydy stats endpointista → käytä full fallbackia
-        if not players:
-            players = search_player_fallback_full(query)
 
         if not players:
             send_telegram("Pelaajaa ei löytynyt.", chat_id)
