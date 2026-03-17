@@ -435,13 +435,16 @@ def extract_goals(pbp_json):
     goals = []
     for p in plays:
         if p.get("typeDescKey") == "goal":
-            d = p.get("details", {})
+            d = p.get("details", {}) or {}
             goals.append({
                 "time": p.get("timeInPeriod", "?"),
                 "period": p.get("periodDescriptor", {}).get("number", 0),
                 "scorer": d.get("scoringPlayerId"),
                 "a1": d.get("assist1PlayerId"),
-                "a2": d.get("assist2PlayerId")
+                "a2": d.get("assist2PlayerId"),
+                # UUTTA:
+                "situationCode": p.get("situationCode"),          # esim. "1551"
+                "eventOwnerTeamId": d.get("eventOwnerTeamId")     # maalin tehnyt joukkue
             })
     return goals
 
@@ -540,6 +543,46 @@ def get_player_stats(player_id):
             }
     return None
 
+def _goal_tags(ev, home_id, away_id):
+    """
+    Palauttaa merkkijonon "YV", "AV", "EN" (pilkuin eroteltuna) tilanteen mukaan.
+    situationCode = awayGoalie-awaySkaters-homeSkaters-homeGoalie (1/0 + skaterimäärä)
+    """
+    code = str(ev.get("situationCode") or "")
+    tags = []
+
+    # Varmista kelpo koodi ja että tunnemme maalin tehneen joukkueen
+    scorer_team = ev.get("eventOwnerTeamId")
+    if len(code) == 4 and scorer_team in (home_id, away_id):
+        try:
+            ag = int(code[0])  # away goalie: 1=maalissa, 0=pois
+            aS = int(code[1])  # away skaters
+            hS = int(code[2])  # home skaters
+            hg = int(code[3])  # home goalie
+        except Exception:
+            ag = hg = 1
+            aS = hS = 5
+
+        # YV/AV päättely skaterimäärien erotuksesta
+        if scorer_team == away_id:
+            if aS > hS:
+                tags.append("YV")
+            elif aS < hS:
+                tags.append("AV")
+            # EN jos vastustajan (home) maalivahti on pois
+            if hg == 0:
+                tags.append("EN")
+        else:  # kotijoukkue teki maalin
+            if hS > aS:
+                tags.append("YV")
+            elif hS < aS:
+                tags.append("AV")
+            # EN jos vastustajan (away) maalivahti on pois
+            if ag == 0:
+                tags.append("EN")
+
+    return ", ".join(tags)
+
 def format_game_output(game, goal_events):
     home = get_team_full_name(game.get("homeTeam", {}))
     away = get_team_full_name(game.get("awayTeam", {}))
@@ -557,27 +600,36 @@ def format_game_output(game, goal_events):
             t = "?"
         header = "{0} @ {1} klo {2}".format(away, home, t)
 
+    # UUTTA: hae joukkue-ID:t tageja varten
+    home_id = game.get("homeTeam", {}).get("id")
+    away_id = game.get("awayTeam", {}).get("id")
+
     if goal_events:
         lines = ["Maalit:"]
         for ev in goal_events:
-            scorer = get_player_name(ev["scorer"])
-            a1 = get_player_name(ev["a1"]) if ev["a1"] else None
-            a2 = get_player_name(ev["a2"]) if ev["a2"] else None
+            scorer = get_player_name(ev["scorer"]) if ev.get("scorer") else "Tuntematon"
+            a1 = get_player_name(ev["a1"]) if ev.get("a1") else None
+            a2 = get_player_name(ev["a2"]) if ev.get("a2") else None
 
+            assist = ""
             if a1 and a2:
                 assist = "{0}, {1}".format(a1, a2)
             elif a1:
                 assist = a1
-            else:
-                assist = ""
+
+            # UUTTA: erä + YV/AV/EN
+            period_str = f"{ev.get('period', 0)}. erä"
+            tags = _goal_tags(ev, home_id, away_id)
+            tag_str = f" — {tags}" if tags else ""
 
             if assist:
-                lines.append(" • {0} {1} ({2})".format(ev["time"], scorer, assist))
+                lines.append(f" • {period_str} {ev['time']} {scorer} ({assist}){tag_str}")
             else:
-                lines.append(" • {0} {1}".format(ev["time"], scorer))
+                lines.append(f" • {period_str} {ev['time']} {scorer}{tag_str}")
 
         header += "\n" + "\n".join(lines)
 
+    # Pistemiehet-osio ennallaan
     pts = calculate_points(goal_events)
     if pts:
         lines = ["Pistemiehet:"]
@@ -673,7 +725,7 @@ def handle_command(text, chat_id):
 
         name = parts[1]
 
-        players = search_players(name)
+        players = search_player(name)
 
         if not players:
             send_telegram("Pelaajaa ei löytynyt.", chat_id)
