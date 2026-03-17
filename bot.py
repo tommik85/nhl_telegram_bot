@@ -741,38 +741,36 @@ def handle_command(text, chat_id):
 
 
     # /standings
-# /standings
-if c == "/standings":
+    if c == "/standings":
 
-    divs = nhl_standings()
+        divs = nhl_standings()
 
-    if not divs:
-        send_telegram("Standings-tietoja ei saatu.", chat_id)
+        if not divs:
+            send_telegram("Standings-tietoja ei saatu.", chat_id)
+            return
+
+        lines = ["🏆 NHL Divisioonat\n"]
+
+        for div_name, teams in divs.items():
+
+            lines.append(f"📍 {div_name}:")
+
+            # teams = [(team, pts, w, l, ot), ...]
+            teams_sorted = sorted(teams, key=lambda x: -x[1])
+
+            for i, (team, pts, w, l, ot) in enumerate(teams_sorted, start=1):
+                games = w + l + ot
+                p_pct = (pts / (games * 2)) if games > 0 else 0.0
+                star = "⭐ " if i <= 3 else ""   # Top-3 merkintä
+
+                lines.append(
+                    f"{i}. {star}{team} — {pts}p ({w}-{l}-{ot}) | P% {p_pct*100:.1f}%"
+                )
+
+            lines.append("")  # tyhjä rivi divisioonien väliin
+
+        send_telegram("\n".join(lines), chat_id)
         return
-
-    lines = ["🏆 NHL Divisioonat\n"]
-
-    for div_name, teams in divs.items():
-
-        lines.append(f"📍 {div_name}:")
-
-        # teams = [(team, pts, w, l, ot), ...]
-        teams_sorted = sorted(teams, key=lambda x: -x[1])
-
-        for i, (team, pts, w, l, ot) in enumerate(teams_sorted, start=1):
-            games = w + l + ot
-            p_pct = (pts / (games * 2)) if games > 0 else 0.0
-            star = "⭐ " if i <= 3 else ""   # Top-3 merkintä
-
-            lines.append(
-                f"{i}. {star}{team} — {pts}p ({w}-{l}-{ot}) | P% {p_pct*100:.1f}%"
-            )
-
-        lines.append("")  # tyhjä rivi divisioonien väliin
-
-    send_telegram("\n".join(lines), chat_id)
-    return
-
 
     # /suomalaiset
     if c == "/suomalaiset":
