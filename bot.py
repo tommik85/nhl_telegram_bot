@@ -409,12 +409,10 @@ def build_name_map(pbp_json):
 
 def get_finnish_points(date_str):
 
-    # Haetaan kauden suomalaiset (skater+goalie), kerran per kutsu
-    finn_ids = get_finnish_player_ids_for_season()
-
+    finn_ids = get_finnish_player_ids_for_season()  # kaikki kauden suomalaiset
     games = nhl_schedule(date_str)
-    stats = {}  # pid -> {"g": int, "a": int}
-    names = {}  # pid -> "First Last" (täytetään PBP:stä)
+    stats = {}
+    names = {}
 
     for g in games:
 
@@ -425,37 +423,33 @@ def get_finnish_points(date_str):
         try:
             pbp = nhl_play_by_play(int(game_pk))
             goals = extract_goals(pbp)
-        except Exception as e:
-            logging.warning(f"PBP fetch failed for {game_pk}: {e}")
+        except:
             continue
 
-        # Pelin kokoonpano PlayerId:t -> varmistetaan, että pelaaja oikeasti pelasi
-        roster_ids = {int(s.get("playerId")) for s in pbp.get("rosterSpots", []) if s.get("playerId")}
-        name_map = build_name_map(pbp)
+        # Nimikartta (jos saatavilla)
+        name_map = {int(s.get("playerId")):
+                    ( (s.get("firstName",{}).get("default","") + " " +
+                       s.get("lastName",{}).get("default","")).strip() )
+                    for s in pbp.get("rosterSpots", [])
+                    if s.get("playerId")
+                    }
         names.update(name_map)
 
-        # Lasketaan vain ne pisteet, jotka ovat: (a) suomalaiselta, (b) pelin rosterissa
         for ev in goals:
             scorer = int(ev["scorer"]) if ev["scorer"] else None
             a1 = int(ev["a1"]) if ev["a1"] else None
             a2 = int(ev["a2"]) if ev["a2"] else None
 
-            # Maali
-            if scorer and scorer in finn_ids and scorer in roster_ids:
-                stats.setdefault(scorer, {"g": 0, "a": 0})
+            if scorer in finn_ids:
+                stats.setdefault(scorer, {"g":0,"a":0})
                 stats[scorer]["g"] += 1
-
-            # Syöttö 1
-            if a1 and a1 in finn_ids and a1 in roster_ids:
-                stats.setdefault(a1, {"g": 0, "a": 0})
+            if a1 in finn_ids:
+                stats.setdefault(a1, {"g":0,"a":0})
                 stats[a1]["a"] += 1
-
-            # Syöttö 2
-            if a2 and a2 in finn_ids and a2 in roster_ids:
-                stats.setdefault(a2, {"g": 0, "a": 0})
+            if a2 in finn_ids:
+                stats.setdefault(a2, {"g":0,"a":0})
                 stats[a2]["a"] += 1
 
-    # Palautetaan (stats, names), jotta tulostus saa oikeat nimet ilman lisähakuja
     return stats, names
 
 def extract_goals(pbp_json):
