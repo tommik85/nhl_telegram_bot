@@ -260,17 +260,29 @@ def format_toi(toi_raw):
     if not toi_raw:
         return "0:00"
 
-    # jos jo valmiiksi muodossa mm:ss
-    if isinstance(toi_raw, str) and ":" in toi_raw:
-        return toi_raw
+    s = str(toi_raw).strip()
+
+    # jo valmiiksi mm:ss
+    if ":" in s:
+        return s
 
     try:
-        sec = int(toi_raw)
-        minutes = sec // 60
-        seconds = sec % 60
+        val = float(s)
+
+        # jos arvo näyttää minuuteilta (esim 18.5)
+        if val < 60:
+            minutes = int(val)
+            seconds = int((val - minutes) * 60)
+            return f"{minutes}:{seconds:02d}"
+
+        # muuten oletetaan sekunneiksi
+        total_seconds = int(val)
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
         return f"{minutes}:{seconds:02d}"
+
     except:
-        return str(toi_raw)
+        return s
 
 FINNISH_PLAYERS = {
     8478402: "Sebastian Aho",
