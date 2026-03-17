@@ -502,7 +502,6 @@ def format_period_label(period_num, period_type):
     if period_num:
         return f"Erä {period_num}"
     return "Erä"
-``
 
 def get_player_name(player_id):
     try:
