@@ -56,6 +56,13 @@ from urllib3.util.retry import Retry
 
 def make_session():
     s = requests.Session()
+
+    # 🔥 LISÄÄ TÄMÄ
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json"
+    })
+    
     retries = Retry(
         total=5,
         backoff_factor=1,
@@ -409,54 +416,42 @@ def build_name_map(pbp_json):
 def search_player_fallback_full(query):
 
     try:
-        # 🔍 1. Hae pelaaja search API:sta
-        url = "https://search.d3.nhle.com/api/v1/search/player"
-        params = {"q": query}
+        # 🔥 käytetään roster endpointtia (toimii varmasti)
+        now = now_local()
+        yr = now.year
+        season = f"{yr-1}{yr}" if now.month < 7 else f"{yr}{yr+1}"
 
-        r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
+        url = f"https://api-web.nhle.com/v1/skaters/{season}"
+        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+
         if r.status_code != 200:
             return []
 
         data = r.json()
+
+        query = query.lower().strip()
         results = []
 
         for p in data:
 
-            player_id = p.get("playerId")
-            name = p.get("name")
+            name = (
+                p.get("firstName", {}).get("default", "") + " " +
+                p.get("lastName", {}).get("default", "")
+            ).strip()
 
-            if not player_id:
-                continue
+            if query in name.lower():
 
-            # 📊 2. Hae statsit
-            stats = get_player_stats(player_id)
-
-            if stats:
                 results.append({
-                    "id": player_id,
+                    "id": p.get("playerId"),
                     "name": name,
-                    "team": "",
-                    "gp": stats.get("games", 0),
-                    "g": stats.get("goals", 0),
-                    "a": stats.get("assists", 0),
-                    "p": stats.get("points", 0),
-                    "pm": 0,
-                    "pim": 0,
-                    "toi": ""
-                })
-            else:
-                # fallback ilman statseja (harvinainen)
-                results.append({
-                    "id": player_id,
-                    "name": name,
-                    "team": "",
-                    "gp": 0,
-                    "g": 0,
-                    "a": 0,
-                    "p": 0,
-                    "pm": 0,
-                    "pim": 0,
-                    "toi": ""
+                    "team": p.get("teamAbbrev", ""),
+                    "gp": p.get("gamesPlayed", 0),
+                    "g": p.get("goals", 0),
+                    "a": p.get("assists", 0),
+                    "p": p.get("points", 0),
+                    "pm": p.get("plusMinus", 0),
+                    "pim": p.get("penaltyMinutes", 0),
+                    "toi": p.get("timeOnIcePerGame", "")
                 })
 
         return results
