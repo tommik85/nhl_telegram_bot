@@ -775,9 +775,14 @@ def handle_command(text, chat_id):
         return
 
 
+# /standings
 if c == "/standings":
 
     confs = nhl_standings()
+
+    if not confs:
+        send_telegram("Standings-tietoja ei saatu.", chat_id)
+        return
 
     # Käydään konferenssit yksi kerrallaan
     for conf_name, conf_data in confs.items():
@@ -831,7 +836,7 @@ if c == "/standings":
             )
 
         send_telegram("\n".join(wc_lines), chat_id)
-        return
+    return
 
 
     # /suomalaiset
