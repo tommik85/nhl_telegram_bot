@@ -857,10 +857,11 @@ def handle_command(text, chat_id):
 
         finnish_names = [
             "Aho", "Rantanen", "Barkov", "Laine", "Hintz", "Lindell", "Heiskanen",
-            "Kakko", "Armia", "Teräväinen", "Lehkonen", "Haula", "Lundell",
-            "Pärssinen", "Luukkonen", "Hyry", "Heponiemi", "Björninen",
-            "Tolvanen", "Granlund", "Puljujärvi", "Kempe", "Määttä", "Kähkönen",
-            "Saros", "Räty", "Kapanen", "Pakkanen", "Niku", "Ojamäki",
+            "Kakko", "Armia", "Teräväinen", "Lehkonen", "Haula", "Lundell", "Helenius",
+            "Koivunen", "Nyman", "Hyry", "Hämeenaho", "Vaakanainen", "Matinpalo", "Lambert",
+            "Pärssinen", "Luukkonen", "Ristolainen", "Heponiemi", "Björninen",
+            "Tolvanen", "Granlund", "Luostarinen", "Maccelli", "Määttä", "Kotkaniemi",
+            "Saros", "Räty", "Kapanen", "Kiviranta", "Jokiharju", "Mikkola",
         ]
         finnish_points = {}  # "Pelaaja" -> g,a
 
