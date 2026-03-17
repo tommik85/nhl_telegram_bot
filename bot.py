@@ -591,15 +591,11 @@ def get_finnish_player_ids_for_season():
 
     return fins
 
-def search_player(query):
+def search_players_full(query):
 
     now = now_local()
     yr = now.year
-
-    if now.month < 7:
-        season = f"{yr-1}{yr}"
-    else:
-        season = f"{yr}{yr+1}"
+    season = f"{yr-1}{yr}" if now.month < 7 else f"{yr}{yr+1}"
 
     url = "https://api.nhle.com/stats/rest/en/skater/summary"
 
@@ -608,7 +604,7 @@ def search_player(query):
         "isGame": "false",
         "sort": "[{\"property\":\"points\",\"direction\":\"DESC\"}]",
         "start": 0,
-        "limit": 500,
+        "limit": 1000,
         "cayenneExp": f"seasonId={season} and gameTypeId=2"
     }
 
@@ -619,20 +615,33 @@ def search_player(query):
     except:
         return []
 
-    query = query.lower()
+    query = query.lower().strip()
+    parts = query.split()
 
     results = []
 
     for p in data:
         name = p.get("skaterFullName", "").lower()
 
-        if query in name:
+        # smart match (kaikki hakusanat löytyy nimestä)
+        if all(part in name for part in parts):
+
             results.append({
+                "id": p.get("playerId"),
                 "name": p.get("skaterFullName", ""),
-                "team": p.get("teamAbbrevs", "")
+                "team": p.get("teamAbbrevs", ""),
+                "gp": p.get("gamesPlayed", 0),
+                "g": p.get("goals", 0),
+                "a": p.get("assists", 0),
+                "p": p.get("points", 0),
+                "pm": p.get("plusMinus", 0),
+                "pim": p.get("penaltyMinutes", 0),
+                "toi": p.get("timeOnIcePerGame", "")
             })
 
     return results
+
+
 
 def get_player_stats(player_id):
     now = now_local()
@@ -826,28 +835,50 @@ def handle_command(text, chat_id):
 
 
     # /players
-    if c.startswith("/players"):
+    # /player PRO
+    if c.startswith("/player"):
 
         parts = text.split(" ", 1)
 
         if len(parts) < 2:
-            send_telegram("Käyttö: /players nimi", chat_id)
+            send_telegram("Käyttö: /player nimi", chat_id)
             return
 
-        name = parts[1]
+        query = parts[1]
 
-        players = search_player(name)
+        players = search_players_full(query)
 
         if not players:
             send_telegram("Pelaajaa ei löytynyt.", chat_id)
             return
 
-        lines = ["🔎 Pelaajahaku:\n"]
+        # 🔹 Jos monta → näytä lista
+        if len(players) > 1:
 
-        for p in players[:10]:
-            lines.append(f"{p['name']} ({p['team']})")
+            lines = ["🔎 Löytyi useita pelaajia:\n"]
 
-        send_telegram("\n".join(lines), chat_id)
+            for i, p in enumerate(players[:10], 1):
+                lines.append(f"{i}. {p['name']} ({p['team']})")
+
+            lines.append("\nTarkenna hakua.")
+            send_telegram("\n".join(lines), chat_id)
+            return
+
+        # 🔹 Yksi pelaaja → näytä statsit
+        p = players[0]
+
+        msg = (
+            f"🏒 {p['name']} ({p['team']})\n\n"
+            f"📊 Ottelut: {p['gp']}\n"
+            f"🥅 Maalit: {p['g']}\n"
+            f"🎯 Syötöt: {p['a']}\n"
+            f"🔥 Pisteet: {p['p']}\n"
+            f"➕/➖: {p['pm']}\n"
+            f"⛔ Jäähyt: {p['pim']}\n"
+            f"⏱ TOI/ottelu: {p['toi']}"
+        )
+
+        send_telegram(msg, chat_id)
         return
 
 
