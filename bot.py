@@ -435,67 +435,15 @@ def extract_goals(pbp_json):
     goals = []
     for p in plays:
         if p.get("typeDescKey") == "goal":
-            d = p.get("details", {}) or {}
-
-            # --- YV / AV
-            strength_val = (d.get("strength") or "").upper()
-            is_pp = False
-            is_sh = False
-            try:
-                if "powerPlay" in d:
-                    is_pp = bool(d.get("powerPlay"))
-                if "shortHanded" in d:
-                    is_sh = bool(d.get("shortHanded"))
-            except:
-                pass
-            if not is_pp and strength_val in ("PP", "PPG", "POWER PLAY"):
-                is_pp = True
-            if not is_sh and strength_val in ("SH", "SHG", "SHORT HANDED", "SHORT-HANDED"):
-                is_sh = True
-
-            # --- EN
-            is_en = False
-            try:
-                if "emptyNet" in d:
-                    is_en = bool(d.get("emptyNet"))
-                elif "isEmptyNet" in d:
-                    is_en = bool(d.get("isEmptyNet"))
-            except:
-                pass
-            if not is_en and strength_val in ("EN", "EMPTY NET"):
-                is_en = True
-
-            period_desc = p.get("periodDescriptor", {}) or {}
+            d = p.get("details", {})
             goals.append({
                 "time": p.get("timeInPeriod", "?"),
-                "period": period_desc.get("number", 0),
-                "periodType": period_desc.get("periodType", ""),
+                "period": p.get("periodDescriptor", {}).get("number", 0),
                 "scorer": d.get("scoringPlayerId"),
                 "a1": d.get("assist1PlayerId"),
-                "a2": d.get("assist2PlayerId"),
-                "yv": is_pp,
-                "av": is_sh,
-                "en": is_en,
+                "a2": d.get("assist2PlayerId")
             })
     return goals
-
-def format_period_label(period_num, period_type):
-    pt = (period_type or "").upper()
-    # Jatkoaika / VL
-    if pt == "OT":
-        return "JA"
-    if pt == "SO":
-        return "VL"
-    # Peruserät
-    try:
-        n = int(period_num)
-    except Exception:
-        n = None
-    if n and 1 <= n <= 3:
-        return f"{n}. erä"
-    if n:
-        return f"Erä {n}"
-    return "Erä"
 
 def get_player_name(player_id):
     try:
@@ -609,7 +557,6 @@ def format_game_output(game, goal_events):
             t = "?"
         header = "{0} @ {1} klo {2}".format(away, home, t)
 
-    # Maalit + tagit
     if goal_events:
         lines = ["Maalit:"]
         for ev in goal_events:
@@ -617,41 +564,34 @@ def format_game_output(game, goal_events):
             a1 = get_player_name(ev["a1"]) if ev["a1"] else None
             a2 = get_player_name(ev["a2"]) if ev["a2"] else None
 
-            assist = f"{a1}, {a2}" if a1 and a2 else (a1 or "")
-
-            period_lbl = format_period_label(ev.get("period"), ev.get("periodType"))
-            prefix = f"{period_lbl} {ev.get('time','?')}"
-
-            tags = []
-            if ev.get("yv"):
-                tags.append("YV")
-            if ev.get("av"):
-                tags.append("AV")
-            if ev.get("en"):
-                tags.append("EN")
-            tag_str = f" ({', '.join(tags)})" if tags else ""
+            if a1 and a2:
+                assist = "{0}, {1}".format(a1, a2)
+            elif a1:
+                assist = a1
+            else:
+                assist = ""
 
             if assist:
-                lines.append(f" • {prefix} {scorer} ({assist}){tag_str}")
+                lines.append(" • {0} {1} ({2})".format(ev["time"], scorer, assist))
             else:
-                lines.append(f" • {prefix} {scorer}{tag_str}")
+                lines.append(" • {0} {1}".format(ev["time"], scorer))
 
         header += "\n" + "\n".join(lines)
 
-    # Pistemiehet
     pts = calculate_points(goal_events)
     if pts:
-        lines = ["\nPistemiehet:"]
+        lines = ["Pistemiehet:"]
         arr = []
         for pid, res in pts.items():
-            g = res["g"]; a = res["a"]; p = g + a
+            g = res["g"]
+            a = res["a"]
+            p = g + a
             name = get_player_name(pid)
             arr.append((p, name, g, a))
         arr.sort(key=lambda x: (-x[0], x[1]))
-        # Jos haluat rajoittaa esim. top-5, käytä arr[:5]
         for p, name, g, a in arr:
-            lines.append(f" • {name} {g}+{a}={p}")
-        header += "\n" + "\n".join(lines)
+            lines.append(" • {0} {1}+{2}={3}".format(name, g, a, p))
+        header += "\n\n" + "\n".join(lines)
 
     return header
 
@@ -689,7 +629,6 @@ def handle_command(text, chat_id):
 
     # /games
     # /games
-    # /games
     if c == "/games":
 
         date_str = nhl_effective_date()
@@ -699,35 +638,27 @@ def handle_command(text, chat_id):
             send_telegram("Ei pelejä tänään.", chat_id)
             return
 
-        # Lähetetään jokainen peli omana viestinä, etteivät viestit ylitä 4096 merkkiä
-        header_sent = False
+        lines = ["🏒 NHL pelit:\n"]
+
         for g in games:
+
+            game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
+            if not game_pk:
+                continue
+
+            # Hae play-by-play
             try:
-                game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
-
+                pbp = nhl_play_by_play(int(game_pk))
+                goals = extract_goals(pbp)
+            except:
                 goals = []
-                if game_pk:
-                    try:
-                        pbp = nhl_play_by_play(int(game_pk))
-                        goals = extract_goals(pbp)
-                    except Exception as e:
-                        logging.warning(f"PBP error for {game_pk}: {e}")
 
-                out = format_game_output(g, goals)
+            # Muotoile koko otteluraportti
+            out = format_game_output(g, goals)
+            lines.append(out)
+            lines.append("")  # tyhjä rivi väliin
 
-                # Otsikko ensimmäiseen viestiin
-                if not header_sent:
-                    out = "🏒 NHL pelit:\n\n" + out
-                    header_sent = True
-
-                # Pilko varmuuden vuoksi
-                for chunk in chunk_text(out):
-                    send_telegram(chunk, chat_id)
-                time.sleep(0.4)
-
-            except Exception as e:
-                logging.warning(f"/games per-game error: {e}")
-
+        send_telegram("\n".join(lines), chat_id)
         return
 
 
