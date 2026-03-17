@@ -172,8 +172,7 @@ def nhl_player_stats():
             "a": p.get("assists", 0),
             "p": p.get("points", 0),
             "pm": p.get("plusMinus", 0),
-            "pim": p.get("penaltyMinutes", 0),
-            "toi": format_toi(p.get("timeOnIcePerGame", ""))
+            "pim": p.get("penaltyMinutes", 0)
         })
 
     return players
@@ -255,34 +254,6 @@ def nhl_effective_date():
         return (local.date() - timedelta(days=1)).strftime("%Y-%m-%d")
     return local.strftime("%Y-%m-%d")
 
-def format_toi(toi_raw):
-
-    if not toi_raw:
-        return "0:00"
-
-    s = str(toi_raw).strip()
-
-    # jo valmiiksi mm:ss
-    if ":" in s:
-        return s
-
-    try:
-        val = float(s)
-
-        # jos arvo näyttää minuuteilta (esim 18.5)
-        if val < 60:
-            minutes = int(val)
-            seconds = int((val - minutes) * 60)
-            return f"{minutes}:{seconds:02d}"
-
-        # muuten oletetaan sekunneiksi
-        total_seconds = int(val)
-        minutes = total_seconds // 60
-        seconds = total_seconds % 60
-        return f"{minutes}:{seconds:02d}"
-
-    except:
-        return s
 
 FINNISH_PLAYERS = {
     8478402: "Sebastian Aho",
@@ -904,7 +875,6 @@ def handle_command(text, chat_id):
             f"🔥 Pisteet: {p['p']}\n"
             f"➕/➖: {p['pm']}\n"
             f"⛔ Jäähyt: {p['pim']}\n"
-            f"⏱ TOI/ottelu: {p['toi']}"
         )
 
         send_telegram(msg, chat_id)
