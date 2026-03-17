@@ -393,10 +393,28 @@ def nhl_play_by_play(game_pk):
     r.raise_for_status()
     return r.json()
 
+def build_name_map(pbp_json):
+    """
+    Nimikartta playerId -> 'Etunimi Sukunimi' suoraan PBP:n rosterSpotsista.
+    """
+    name_map = {}
+    for spot in pbp_json.get("rosterSpots", []):
+        pid = spot.get("playerId")
+        fn = ((spot.get("firstName") or {}).get("default") or "").strip()
+        ln = ((spot.get("lastName")  or {}).get("default") or "").strip()
+        if pid and (fn or ln):
+            name_map[int(pid)] = (fn + " " + ln).strip()
+    return name_map
+
+
 def get_finnish_points(date_str):
 
+    # Haetaan kauden suomalaiset (skater+goalie), kerran per kutsu
+    finn_ids = get_finnish_player_ids_for_season()
+
     games = nhl_schedule(date_str)
-    stats = {}
+    stats = {}  # pid -> {"g": int, "a": int}
+    names = {}  # pid -> "First Last" (täytetään PBP:stä)
 
     for g in games:
 
@@ -407,28 +425,38 @@ def get_finnish_points(date_str):
         try:
             pbp = nhl_play_by_play(int(game_pk))
             goals = extract_goals(pbp)
-        except:
+        except Exception as e:
+            logging.warning(f"PBP fetch failed for {game_pk}: {e}")
             continue
 
-        for ev in goals:
+        # Pelin kokoonpano PlayerId:t -> varmistetaan, että pelaaja oikeasti pelasi
+        roster_ids = {int(s.get("playerId")) for s in pbp.get("rosterSpots", []) if s.get("playerId")}
+        name_map = build_name_map(pbp)
+        names.update(name_map)
 
+        # Lasketaan vain ne pisteet, jotka ovat: (a) suomalaiselta, (b) pelin rosterissa
+        for ev in goals:
             scorer = int(ev["scorer"]) if ev["scorer"] else None
             a1 = int(ev["a1"]) if ev["a1"] else None
             a2 = int(ev["a2"]) if ev["a2"] else None
 
-            if scorer in FINNISH_PLAYERS:
-                stats.setdefault(scorer, {"g":0,"a":0})
+            # Maali
+            if scorer and scorer in finn_ids and scorer in roster_ids:
+                stats.setdefault(scorer, {"g": 0, "a": 0})
                 stats[scorer]["g"] += 1
 
-            if a1 in FINNISH_PLAYERS:
-                stats.setdefault(a1, {"g":0,"a":0})
+            # Syöttö 1
+            if a1 and a1 in finn_ids and a1 in roster_ids:
+                stats.setdefault(a1, {"g": 0, "a": 0})
                 stats[a1]["a"] += 1
 
-            if a2 in FINNISH_PLAYERS:
-                stats.setdefault(a2, {"g":0,"a":0})
+            # Syöttö 2
+            if a2 and a2 in finn_ids and a2 in roster_ids:
+                stats.setdefault(a2, {"g": 0, "a": 0})
                 stats[a2]["a"] += 1
 
-    return stats
+    # Palautetaan (stats, names), jotta tulostus saa oikeat nimet ilman lisähakuja
+    return stats, names
 
 def extract_goals(pbp_json):
     plays = pbp_json.get("plays", [])
@@ -513,6 +541,61 @@ def nhl_standings():
         divisions[div].sort(key=lambda x: -x[1])
 
     return divisions
+
+def get_finnish_player_ids_for_season():
+    """
+    Palauttaa setin kaikista kuluvan NHL-kauden suomalaisista pelaaja-ID:istä
+    (skaterit + maalivahdit) stats REST -rajapinnan perusteella.
+    """
+    now = now_local()
+    yr = now.year
+    season = f"{yr-1}{yr}" if now.month < 7 else f"{yr}{yr+1}"
+
+    base = "https://api.nhle.com/stats/rest/en"
+
+    fins = set()
+
+    # Skaterit
+    try:
+        url = f"{base}/skater/summary"
+        params = {
+            "isAggregate": "false",
+            "isGame": "false",
+            "sort": '[{"property":"points","direction":"DESC"}]',
+            "start": 0,
+            "limit": 500,
+            "cayenneExp": f"seasonId={season} and gameTypeId=2 and nationality='FIN'"
+        }
+        r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        for p in r.json().get("data", []):
+            pid = p.get("playerId") or p.get("playerId", None)  # useampi schema-variantti on nähty
+            if pid:
+                fins.add(int(pid))
+    except Exception as e:
+        logging.warning(f"FIN skaters fetch failed: {e}")
+
+    # Maalivahdit (goalie summary)
+    try:
+        url = f"{base}/goalie/summary"
+        params = {
+            "isAggregate": "false",
+            "isGame": "false",
+            "sort": '[{"property":"wins","direction":"DESC"}]',
+            "start": 0,
+            "limit": 500,
+            "cayenneExp": f"seasonId={season} and gameTypeId=2 and nationality='FIN'"
+        }
+        r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        for p in r.json().get("data", []):
+            pid = p.get("playerId")
+            if pid:
+                fins.add(int(pid))
+    except Exception as e:
+        logging.warning(f"FIN goalies fetch failed: {e}")
+
+    return fins
 
 def search_player(query):
     try:
@@ -776,26 +859,32 @@ def handle_command(text, chat_id):
     if c == "/suomalaiset":
 
         date_str = nhl_effective_date()
-        stats = get_finnish_points(date_str)
+        result = get_finnish_points(date_str)
+
+        # Taaksepäin yhteensopivuus jos vanha versio palauttaa vain stats
+        if isinstance(result, tuple) and len(result) == 2:
+            stats, name_map = result
+        else:
+            stats, name_map = result, {}
 
         if not stats:
             send_telegram("Ei suomalaispisteitä viime yön peleissä.", chat_id)
             return
 
+        # Järjestä pisteiden mukaan
+        ordered = sorted(
+            ((pid, v["g"], v["a"], v["g"] + v["a"]) for pid, v in stats.items()),
+            key=lambda x: (-x[3], -x[1], name_map.get(x[0], FINNISH_PLAYERS.get(x[0], str(x[0]))))
+        )
+
         lines = ["🇫🇮 Suomalaisten pisteet viime yön NHL-peleissä:\n"]
-
-        for pid, s in stats.items():
-
-            name = FINNISH_PLAYERS.get(pid, str(pid))
-            g = s["g"]
-            a = s["a"]
-            p = g + a
-
-            lines.append(f"• {name} {g}+{a}={p}")
+        for pid, g, a, p in ordered:
+            name = name_map.get(pid) or FINNISH_PLAYERS.get(pid, f"Pelaaja {pid}")
+            lines.append(f"• {name}: {g}+{a}={p}")
 
         send_telegram("\n".join(lines), chat_id)
         return
-
+        
     # /top30
     if c == "/top30":
 
