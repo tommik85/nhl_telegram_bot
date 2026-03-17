@@ -628,6 +628,7 @@ def handle_command(text, chat_id):
 
 
     # /games
+    # /games
     if c == "/games":
 
         date_str = nhl_effective_date()
@@ -641,15 +642,21 @@ def handle_command(text, chat_id):
 
         for g in games:
 
-            away = g["awayTeam"]["abbrev"]
-            home = g["homeTeam"]["abbrev"]
+            game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
+            if not game_pk:
+                continue
 
-            if g.get("gameState") == "OFF":
-                score = f"{g['awayTeam']['score']} - {g['homeTeam']['score']}"
-            else:
-                score = "vs"
+            # Hae play-by-play
+            try:
+                pbp = nhl_play_by_play(int(game_pk))
+                goals = extract_goals(pbp)
+            except:
+                goals = []
 
-            lines.append(f"{away} {score} {home}")
+            # Muotoile koko otteluraportti
+            out = format_game_output(g, goals)
+            lines.append(out)
+            lines.append("")  # tyhjä rivi väliin
 
         send_telegram("\n".join(lines), chat_id)
         return
