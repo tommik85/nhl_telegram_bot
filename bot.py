@@ -490,64 +490,29 @@ def nhl_standings():
     r.raise_for_status()
 
     data = r.json()
+
     rows = data.get("standings", [])
 
-    # Rakennetaan konferenssi- ja divisioonarakenne
-    conferences = {
-        "Eastern": {"divisions": {}, "wildcards": []},
-        "Western": {"divisions": {}, "wildcards": []}
-    }
+    divisions = {}
 
     for row in rows:
 
         div = row.get("divisionName")
-        conf = row.get("conferenceName")
-        if not div or not conf:
+        if not div:
             continue
 
         team = row.get("teamName", {}).get("default", "")
         pts = row.get("points", 0)
-        w   = row.get("wins", 0)
-        l   = row.get("losses", 0)
-        ot  = row.get("otLosses", 0)
-        gf  = row.get("goalsFor", 0)
-        ga  = row.get("goalsAgainst", 0)
-        diff = gf - ga
+        w = row.get("wins", 0)
+        l = row.get("losses", 0)
+        ot = row.get("otLosses", 0)
 
-        # viimeiset 10
-        l10w  = row.get("l10Wins", 0)
-        l10l  = row.get("l10Losses", 0)
-        l10ot = row.get("l10OtLosses", 0)
+        divisions.setdefault(div, []).append((team, pts, w, l, ot))
 
-        # streak (esim. W3, L2, OT1)
-        streak = row.get("streakCode", "")  # esim. "W3", "L2"
+    for div in divisions:
+        divisions[div].sort(key=lambda x: -x[1])
 
-        # pelejä
-        games = w + l + ot
-        p_pct = pts / (games * 2) if games > 0 else 0
-
-        entry = {
-            "team": team,
-            "pts": pts,
-            "w": w,
-            "l": l,
-            "ot": ot,
-            "gf": gf,
-            "ga": ga,
-            "diff": diff,
-            "p_pct": p_pct,
-            "l10": (l10w, l10l, l10ot),
-            "streak": streak
-        }
-
-        conferences[conf]["divisions"].setdefault(div, []).append(entry)
-
-    # Lajitellaan divisioonat pistejärjestykseen
-    for conf in conferences.values():
-        for div, teams in conf["divisions"].items():
-            teams.sort(key=lambda x: -x["pts"])
-
-    return conferences
+    return divisions
 
 def search_player(query):
     try:
@@ -775,71 +740,30 @@ def handle_command(text, chat_id):
         return
 
 
-# /standings
-# /standings
-if c == "/standings":
+    # /standings
+    if c == "/standings":
 
-    confs = nhl_standings()
+        divs = nhl_standings()
 
-    if not confs:
-        send_telegram("Standings-tietoja ei saatu.", chat_id)
+        if not divs:
+            send_telegram("Standings-tietoja ei saatu.", chat_id)
+            return
+
+        lines = ["🏆 NHL divisioonat:\n"]
+
+        for div, teams in divs.items():
+
+            lines.append(div)
+
+            for team, pts, w, l, ot in teams:
+
+                lines.append(f"• {team} {pts}p ({w}-{l}-{ot})")
+
+            lines.append("")
+
+        send_telegram("\n".join(lines), chat_id)
         return
 
-    # Käydään konferenssit yksi kerrallaan
-    for conf_name, conf_data in confs.items():
-
-        send_telegram(f"🏆 {conf_name} Conference", chat_id)
-
-        divs = conf_data["divisions"]
-        wc_list = []
-
-        # 1) Divisioonat
-        for div_name, teams in divs.items():
-
-            lines = [f"📍 {div_name} Division\n"]
-
-            # top-3 = playoff-paikat
-            for i, t in enumerate(teams):
-
-                star = "⭐" if i < 3 else ""
-                streak = t["streak"]
-                l10w, l10l, l10ot = t["l10"]
-
-                # vire-indikaattori
-                emoji_vire = ""
-                if l10w >= 7:
-                    emoji_vire = "🔥"
-                elif l10l >= 7:
-                    emoji_vire = "❄️"
-
-                lines.append(
-                    f"{star} {t['team']} — {t['pts']}p ({t['w']}-{t['l']}-{t['ot']}) | "
-                    f"GF-GA {t['gf']}-{t['ga']} ({t['diff']:+}) | "
-                    f"P% {t['p_pct']*100:.1f}% | "
-                    f"L10 {l10w}-{l10l}-{l10ot} | Streak {streak} {emoji_vire}"
-                )
-
-                if i >= 3:
-                    wc_list.append(t)
-
-            send_telegram("\n".join(lines), chat_id)
-
-        # 2) Wildcard – kaksi parasta koko konferenssista divisioonarajojen jälkeen
-        wc_list.sort(key=lambda x: -x["pts"])
-        wc_top = wc_list[:2]
-
-        wc_lines = ["🎟 Wildcard-paikat:\n"]
-        for t in wc_top:
-            l10w, l10l, l10ot = t["l10"]
-            wc_lines.append(
-                f"• {t['team']} — {t['pts']}p | "
-                f"L10 {l10w}-{l10l}-{l10ot} | Diff {t['diff']:+}"
-            )
-
-        send_telegram("\n".join(wc_lines), chat_id)
-
-    # HUOM: tämä return päättää vain /standings-haaran handle_command-funktiossa
-    return
 
     # /suomalaiset
     if c == "/suomalaiset":
