@@ -173,7 +173,7 @@ def nhl_player_stats():
             "p": p.get("points", 0),
             "pm": p.get("plusMinus", 0),
             "pim": p.get("penaltyMinutes", 0),
-            "toi": p.get("timeOnIcePerGame", "")
+            "toi": format_toi(p.get("timeOnIcePerGame", ""))
         })
 
     return players
@@ -254,6 +254,23 @@ def nhl_effective_date():
     if local.hour < 18:
         return (local.date() - timedelta(days=1)).strftime("%Y-%m-%d")
     return local.strftime("%Y-%m-%d")
+
+def format_toi(toi_raw):
+
+    if not toi_raw:
+        return "0:00"
+
+    # jos jo valmiiksi muodossa mm:ss
+    if isinstance(toi_raw, str) and ":" in toi_raw:
+        return toi_raw
+
+    try:
+        sec = int(toi_raw)
+        minutes = sec // 60
+        seconds = sec % 60
+        return f"{minutes}:{seconds:02d}"
+    except:
+        return str(toi_raw)
 
 FINNISH_PLAYERS = {
     8478402: "Sebastian Aho",
