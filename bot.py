@@ -536,18 +536,15 @@ def nhl_standings():
 
     return divisions
 
-def get_current_season_id():
-    now = now_local()
-    yr = now.year
-    return f"{yr-1}{yr}" if now.month < 7 else f"{yr}{yr+1}"
-
-
 def get_finnish_player_ids_for_season():
     """
-    Palauttaa setin kuluvan kauden (runkosarja) suomalaisista pelaaja-ID:istä
-    (sekä kenttäpelaajat että maalivahdit) NHL stats REST -rajapinnasta.
+    Palauttaa setin kaikista kuluvan NHL-kauden suomalaisista pelaaja-ID:istä
+    (skaterit + maalivahdit) stats REST -rajapinnan perusteella.
     """
-    season = get_current_season_id()
+    now = now_local()
+    yr = now.year
+    season = f"{yr-1}{yr}" if now.month < 7 else f"{yr}{yr+1}"
+
     base = "https://api.nhle.com/stats/rest/en"
 
     fins = set()
@@ -566,13 +563,13 @@ def get_finnish_player_ids_for_season():
         r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
         for p in r.json().get("data", []):
-            pid = p.get("playerId")
+            pid = p.get("playerId") or p.get("playerId", None)  # useampi schema-variantti on nähty
             if pid:
                 fins.add(int(pid))
     except Exception as e:
         logging.warning(f"FIN skaters fetch failed: {e}")
 
-    # Maalivahdit
+    # Maalivahdit (goalie summary)
     try:
         url = f"{base}/goalie/summary"
         params = {
@@ -602,82 +599,6 @@ def search_player(query):
         return r.json().get("items", [])
     except:
         return []
-
-def build_name_map(pbp_json):
-    """
-    Nimikartta playerId -> 'Etunimi Sukunimi' suoraan PBP:n rosterSpotsista.
-    """
-    name_map = {}
-    for spot in pbp_json.get("rosterSpots", []):
-        pid = spot.get("playerId")
-        fn = ((spot.get("firstName") or {}).get("default") or "").strip()
-        ln = ((spot.get("lastName")  or {}).get("default") or "").strip()
-        if pid and (fn or ln):
-            name_map[int(pid)] = (fn + " " + ln).strip()
-    return name_map
-
-def get_finnish_points_by_game(date_str):
-    """
-    Palauttaa listan pelikohtaisista tuloksista:
-    [
-      {
-        "game": g,                      # schedule-objekti
-        "points": { pid: {"g":int,"a":int}, ... },  # vain suomalaiset
-        "names": { pid: "First Last", ... }         # nimikartta (PBP->rosterSpots + fallback)
-      },
-      ...
-    ]
-    Mukana vain pelit, joissa suomalaisille tuli pisteitä.
-    """
-    games = nhl_schedule(date_str)
-    finn_ids = get_finnish_player_ids_for_season()
-    results = []
-
-    for g in games:
-        game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
-        if not game_pk:
-            continue
-
-        try:
-            pbp = nhl_play_by_play(int(game_pk))
-            goals = extract_goals(pbp)
-        except Exception as e:
-            logging.warning(f"PBP fetch failed for {game_pk}: {e}")
-            continue
-
-        # Pisteet tästä pelistä (kaikki pelaajat)
-        all_pts = calculate_points(goals)
-
-        # Suodata suomalaisiin
-        fin_pts = {}
-        for pid, res in all_pts.items():
-            try:
-                ipid = int(pid)
-            except:
-                try:
-                    ipid = int(str(pid))
-                except:
-                    ipid = None
-            if ipid and ipid in finn_ids:
-                fin_pts[ipid] = {"g": res.get("g", 0), "a": res.get("a", 0)}
-
-        if not fin_pts:
-            continue
-
-        # Nimikartta PBP:stä + fallback
-        name_map = build_name_map(pbp)
-        for pid in list(fin_pts.keys()):
-            if pid not in name_map:
-                name_map[pid] = get_player_name(pid)
-
-        results.append({
-            "game": g,
-            "points": fin_pts,
-            "names": name_map
-        })
-
-    return results
-
 
 def get_player_stats(player_id):
     now = now_local()
@@ -929,52 +850,70 @@ def handle_command(text, chat_id):
         return
 
     # /suomalaiset
-    # /suomalaiset
     if c == "/suomalaiset":
 
         date_str = nhl_effective_date()
-        per_game = get_finnish_points_by_game(date_str)
+        games = nhl_schedule(date_str)
 
-        if not per_game:
+        finnish_names = [
+            "Aho", "Rantanen", "Barkov", "Laine", "Hintz", "Lindell", "Heiskanen",
+            "Kakko", "Armia", "Teräväinen", "Lehkonen", "Haula", "Lundell",
+            "Pärssinen", "Luukkonen", "Hyry", "Heponiemi", "Björninen",
+            "Tolvanen", "Granlund", "Puljujärvi", "Kempe", "Määttä", "Kähkönen",
+            "Saros", "Räty", "Kapanen", "Pakkanen", "Niku", "Ojamäki",
+        ]
+        finnish_points = {}  # "Pelaaja" -> g,a
+
+        for g in games:
+
+            game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
+            if not game_pk:
+                continue
+
+            try:
+                pbp = nhl_play_by_play(int(game_pk))
+                goals = extract_goals(pbp)
+            except:
+                continue
+
+            # Käytetään samaa funktiota kuin /games
+            pts = calculate_points(goals)
+
+            # Käydään jokaisen pelaajan pisteet läpi
+            for pid, res in pts.items():
+                name = get_player_name(pid)
+
+                # Suomalaisen tunnistus nimen perusteella
+                if any(suomi in name for suomi in finnish_names):
+
+                    gnum = res["g"]
+                    anum = res["a"]
+
+                    if name not in finnish_points:
+                        finnish_points[name] = {"g": 0, "a": 0}
+
+                    finnish_points[name]["g"] += gnum
+                    finnish_points[name]["a"] += anum
+
+        if not finnish_points:
             send_telegram("Ei suomalaispisteitä viime yön peleissä.", chat_id)
             return
 
+        # Järjestetään pistemäärän mukaan
         lines = ["🇫🇮 Suomalaisten pisteet viime yön NHL-peleissä:\n"]
 
-        for item in per_game:
-            g = item["game"]
-            fin_pts = item["points"]
-            names = item["names"]
+        sorted_finns = sorted(
+            finnish_points.items(),
+            key=lambda x: -(x[1]["g"] + x[1]["a"])
+        )
 
-            home = get_team_full_name(g.get("homeTeam", {}))
-            away = get_team_full_name(g.get("awayTeam", {}))
-            hsc = g.get("homeTeam", {}).get("score")
-            asc = g.get("awayTeam", {}).get("score")
-
-            if hsc is not None and asc is not None:
-                header = f"{home} {hsc}–{asc} {away}: "
-            else:
-                header = f"{away} @ {home}: "
-
-            arr = []
-            for pid, pa in fin_pts.items():
-                gnum = pa["g"]
-                anum = pa["a"]
-                p = gnum + anum
-                arr.append((p, gnum, names.get(pid, f"Pelaaja {pid}")))
-            arr.sort(key=lambda x: (-x[0], -x[1], x[2]))
-
-            players_str = ", ".join(
-                f"{name} {gnum}+{(p-gnum)}={p}"
-                for (p, gnum, name) in arr
-            )
-
-            lines.append(header + players_str)
+        for name, res in sorted_finns:
+            g = res["g"]
+            a = res["a"]
+            lines.append(f"• {name}: {g}+{a}={g+a}")
 
         send_telegram("\n".join(lines), chat_id)
         return
-
- 
     
     # /top30
     if c == "/top30":
