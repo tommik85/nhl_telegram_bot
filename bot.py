@@ -794,7 +794,7 @@ def tg_get_updates(offset):
 # ---------------------------------------------------------------------------
 
 def handle_command(text, chat_id):
-logging.info(f"📩 COMMAND RECEIVED: {text}")
+    logging.info(f"📩 COMMAND RECEIVED: {text}")
     c = text.lower().strip()
 
     # /ping
