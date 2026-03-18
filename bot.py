@@ -42,14 +42,11 @@ TWITTER_USERS = [
 RSS_FEEDS = [
     "https://www.iltalehti.fi/rss/nhl.xml",
     "https://www.is.fi/rss/nhl.xml",
+    "https://www.nhl.com/rss/news.xml",
+    "https://feeds.yle.fi/uutiset/v1/majorHeadlines/urheilu.rss",
 ]
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
-
-logging.info("=== BOT STARTING ===")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # ---------------------------------------------------------------------------
 # HTTP SESSION WITH RETRY
@@ -222,15 +219,14 @@ def nhl_finnish_stats():
     players.sort(key=lambda x: -x["p"])
 
     return players
-
+    
 def send_telegram(msg: str, chat_id=None):
     if not chat_id:
         chat_id = CHAT_ID
     if not TOKEN or not chat_id:
-        logging.error("❌ Missing TOKEN/CHAT_ID – viestiä ei lähetetä")
+        logging.warning("Missing TOKEN/CHAT_ID")
         return
     try:
-        logging.info(f"📤 SENDING MESSAGE: {msg[:50]}")
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         SESSION.post(url, data={"chat_id": chat_id, "text": msg}, timeout=HTTP_TIMEOUT)
     except Exception as e:
@@ -780,7 +776,7 @@ def tg_get_updates(offset):
         params = {"timeout": 20}
         if offset is not None:
             params["offset"] = offset
-        r = SESSION.get(url, params=params, timeout=30)
+        r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
         if r.status_code != 200:
             return []
         return r.json().get("result", [])
@@ -794,7 +790,7 @@ def tg_get_updates(offset):
 # ---------------------------------------------------------------------------
 
 def handle_command(text, chat_id):
-    logging.info(f"📩 COMMAND RECEIVED: {text}")
+
     c = text.lower().strip()
 
     # /ping
@@ -1072,9 +1068,6 @@ def poll_commands(state):
 
     offset = state.get("tg_offset")
     updates = tg_get_updates(offset)
-
-    logging.info(f"OFFSET: {offset} | updates: {len(updates)}")
-
     if not updates:
         return
 
@@ -1107,10 +1100,8 @@ def poll_commands(state):
 # ---------------------------------------------------------------------------
 def main():
     init_db()
-    logging.info("NHL Modern Bot is running...")  
-    logging.info(f"TOKEN OK: {bool(TOKEN)}")
-    logging.info(f"CHAT_ID: {CHAT_ID}")
-    
+    logging.info("NHL Modern Bot is running...")
+
     last_rss = 0
     last_tw = 0
     last_cmd = 0
@@ -1139,7 +1130,7 @@ def main():
             time.sleep(1)
 
         except Exception as e:
-            logging.exception("💥 MAIN LOOP CRASH")
+            logging.warning(f"Main loop error: {e}")
             time.sleep(5)
 
 
