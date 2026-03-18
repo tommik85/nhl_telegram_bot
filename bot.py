@@ -223,7 +223,6 @@ def nhl_finnish_stats():
 
     return players
 
-logging.info(f"📤 SENDING MESSAGE: {msg[:50]}")
 def send_telegram(msg: str, chat_id=None):
     if not chat_id:
         chat_id = CHAT_ID
@@ -231,6 +230,7 @@ def send_telegram(msg: str, chat_id=None):
         logging.error("❌ Missing TOKEN/CHAT_ID – viestiä ei lähetetä")
         return
     try:
+        logging.info(f"📤 SENDING MESSAGE: {msg[:50]}")
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         SESSION.post(url, data={"chat_id": chat_id, "text": msg}, timeout=HTTP_TIMEOUT)
     except Exception as e:
