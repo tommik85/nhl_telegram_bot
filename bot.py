@@ -1109,7 +1109,7 @@ def main():
     init_db()
     logging.info("NHL Modern Bot is running...")  
     logging.info(f"TOKEN OK: {bool(TOKEN)}")
-        logging.info(f"CHAT_ID: {CHAT_ID}")
+    logging.info(f"CHAT_ID: {CHAT_ID}")
     
     last_rss = 0
     last_tw = 0
