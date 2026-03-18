@@ -132,7 +132,6 @@ def normalize_url(url: str) -> str:
         return url
         
 def nhl_player_stats():
-
     now = now_local()
     yr = now.year
 
@@ -159,11 +158,8 @@ def nhl_player_stats():
     data = r.json().get("data", [])
 
     players = []
-
     for p in data:
-
         name = f"{p.get('skaterFullName','')}".strip()
-
         players.append({
             "name": name,
             "team": p.get("teamAbbrevs", ""),
@@ -172,14 +168,11 @@ def nhl_player_stats():
             "a": p.get("assists", 0),
             "p": p.get("points", 0),
             "pm": p.get("plusMinus", 0),
-            "pim": p.get("penaltyMinutes", 0),
-            "toi": p.get("timeOnIcePerGame", "")
+            "pim": p.get("penaltyMinutes", 0)
         })
-
     return players
 
 def nhl_finnish_stats():
-
     now = now_local()
     yr = now.year
 
@@ -205,9 +198,7 @@ def nhl_finnish_stats():
     data = r.json().get("data", [])
 
     players = []
-
     for p in data:
-
         players.append({
             "name": p.get("skaterFullName", ""),
             "team": p.get("teamAbbrevs", ""),
@@ -216,30 +207,34 @@ def nhl_finnish_stats():
             "a": p.get("assists", 0),
             "p": p.get("points", 0)
         })
-
     players.sort(key=lambda x: -x["p"])
-
     return players
-    
+
 def send_telegram(msg: str, chat_id=None):
     if not chat_id:
         chat_id = CHAT_ID
     if not TOKEN or not chat_id:
-        logging.warning("Missing TOKEN/CHAT_ID")
+        logging.error("❌ Missing TOKEN/CHAT_ID – viestiä ei lähetetä")
         return
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        SESSION.post(url, data={"chat_id": chat_id, "text": msg}, timeout=HTTP_TIMEOUT)
+        resp = SESSION.post(url, data={"chat_id": str(chat_id), "text": msg}, timeout=HTTP_TIMEOUT)
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = {"raw": resp.text}
+        if resp.status_code != 200 or not payload.get("ok", False):
+            logging.error(f"❌ Telegram sendMessage FAILED: {resp.status_code} {payload}")
+        else:
+            logging.info(f"📤 Sent to {chat_id}: {msg[:80]}...")
     except Exception as e:
-        logging.warning(f"Telegram error: {e}")
+        logging.exception(f"Telegram sendMessage exception: {e}")
 
 def is_recent(pub_time):
     try:
         dt = dateparser.parse(pub_time)
-
         if not dt.tzinfo:
             dt = pytz.utc.localize(dt)
-
         limit = datetime.now(pytz.utc) - timedelta(hours=48)
         return dt > limit
     except:
@@ -254,6 +249,7 @@ def nhl_effective_date():
     if local.hour < 18:
         return (local.date() - timedelta(days=1)).strftime("%Y-%m-%d")
     return local.strftime("%Y-%m-%d")
+
 
 FINNISH_PLAYERS = {
     8478402: "Sebastian Aho",
@@ -281,9 +277,7 @@ def poll_rss():
     for feed_url in RSS_FEEDS:
         try:
             feed = feedparser.parse(feed_url)
-
             for entry in feed.entries:
-
                 pub = getattr(entry, "published", None) or getattr(entry, "updated", None)
                 title = getattr(entry, "title", "").strip()
                 link = normalize_url(getattr(entry, "link", ""))
@@ -309,6 +303,7 @@ def poll_rss():
         except Exception as e:
             logging.warning(f"RSS error: {e}")
             time.sleep(2)
+
 # ---------------------------------------------------------------------------
 # TWITTER / X — A-version (no API key)
 # ---------------------------------------------------------------------------
@@ -342,26 +337,17 @@ def twitter_get_latest_tweets(user_id, limit=5):
         return []
 
 def poll_twitter():
-
     for handle in TWITTER_USERS:
-
         try:
-
             url = f"https://nitter.net/{handle}/rss"
-
             feed = feedparser.parse(url)
-
             for entry in feed.entries[:5]:
-
                 title = entry.title
                 link = entry.link
-
                 if has_seen(link):
                     continue
-
                 send_telegram(f"X ({handle})\n\n{title}\n{link}")
                 mark_seen(link)
-
         except Exception as e:
             logging.warning(f"Twitter RSS error: {e}")
 
@@ -408,14 +394,12 @@ def build_name_map(pbp_json):
 
 
 def get_finnish_points(date_str):
-
     finn_ids = get_finnish_player_ids_for_season()  # kaikki kauden suomalaiset
     games = nhl_schedule(date_str)
     stats = {}
     names = {}
 
     for g in games:
-
         game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
         if not game_pk:
             continue
@@ -427,12 +411,13 @@ def get_finnish_points(date_str):
             continue
 
         # Nimikartta (jos saatavilla)
-        name_map = {int(s.get("playerId")):
-                    ( (s.get("firstName",{}).get("default","") + " " +
-                       s.get("lastName",{}).get("default","")).strip() )
-                    for s in pbp.get("rosterSpots", [])
-                    if s.get("playerId")
-                    }
+        name_map = {
+            int(s.get("playerId")):
+                ((s.get("firstName", {}).get("default", "") + " " +
+                  s.get("lastName", {}).get("default", "")).strip())
+            for s in pbp.get("rosterSpots", [])
+            if s.get("playerId")
+        }
         names.update(name_map)
 
         for ev in goals:
@@ -441,13 +426,13 @@ def get_finnish_points(date_str):
             a2 = int(ev["a2"]) if ev["a2"] else None
 
             if scorer in finn_ids:
-                stats.setdefault(scorer, {"g":0,"a":0})
+                stats.setdefault(scorer, {"g": 0, "a": 0})
                 stats[scorer]["g"] += 1
             if a1 in finn_ids:
-                stats.setdefault(a1, {"g":0,"a":0})
+                stats.setdefault(a1, {"g": 0, "a": 0})
                 stats[a1]["a"] += 1
             if a2 in finn_ids:
-                stats.setdefault(a2, {"g":0,"a":0})
+                stats.setdefault(a2, {"g": 0, "a": 0})
                 stats[a2]["a"] += 1
 
     return stats, names
@@ -506,19 +491,15 @@ def get_team_full_name(team_block):
     return team_block.get("abbrev", "Team")
 
 def nhl_standings():
-
     url = "https://api-web.nhle.com/v1/standings/now"
     r = SESSION.get(url, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
 
     data = r.json()
-
     rows = data.get("standings", [])
-
     divisions = {}
 
     for row in rows:
-
         div = row.get("divisionName")
         if not div:
             continue
@@ -563,7 +544,7 @@ def get_finnish_player_ids_for_season():
         r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
         for p in r.json().get("data", []):
-            pid = p.get("playerId") or p.get("playerId", None)  # useampi schema-variantti on nähty
+            pid = p.get("playerId") or p.get("playerId", None)
             if pid:
                 fins.add(int(pid))
     except Exception as e:
@@ -591,14 +572,50 @@ def get_finnish_player_ids_for_season():
 
     return fins
 
-def search_player(query):
+def search_players_full(query):
+    now = now_local()
+    yr = now.year
+    season = f"{yr-1}{yr}" if now.month < 7 else f"{yr}{yr+1}"
+
+    url = "https://api.nhle.com/stats/rest/en/skater/summary"
+
+    params = {
+        "isAggregate": "false",
+        "isGame": "false",
+        "sort": "[{\"property\":\"points\",\"direction\":\"DESC\"}]",
+        "start": 0,
+        "limit": 1000,
+        "cayenneExp": f"seasonId={season} and gameTypeId=2"
+    }
+
     try:
-        url = "https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q={0}".format(query)
-        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+        r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
-        return r.json().get("items", [])
+        data = r.json().get("data", [])
     except:
         return []
+
+    query = query.lower().strip()
+    parts = query.split()
+
+    results = []
+    for p in data:
+        name = p.get("skaterFullName", "").lower()
+        # smart match (kaikki hakusanat löytyy nimestä)
+        if all(part in name for part in parts):
+            results.append({
+                "id": p.get("playerId"),
+                "name": p.get("skaterFullName", ""),
+                "team": p.get("teamAbbrevs", ""),
+                "gp": p.get("gamesPlayed", 0),
+                "g": p.get("goals", 0),
+                "a": p.get("assists", 0),
+                "p": p.get("points", 0),
+                "pm": p.get("plusMinus", 0),
+                "pim": p.get("penaltyMinutes", 0),
+                "toi": p.get("timeOnIcePerGame", "")
+            })
+    return results
 
 def get_player_stats(player_id):
     now = now_local()
@@ -735,19 +752,22 @@ def tg_get_updates(offset):
             params["offset"] = offset
         r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
         if r.status_code != 200:
+            logging.error(f"getUpdates HTTP {r.status_code}: {r.text}")
             return []
-        return r.json().get("result", [])
+        body = r.json()
+        if not body.get("ok", False):
+            logging.error(f"getUpdates error payload: {body}")
+            return []
+        return body.get("result", [])
     except Exception as e:
         logging.warning(f"getUpdates error: {e}")
         return []
-
 
 # ---------------------------------------------------------------------------
 # COMMAND HANDLER
 # ---------------------------------------------------------------------------
 
 def handle_command(text, chat_id):
-
     c = text.lower().strip()
 
     # /ping
@@ -755,11 +775,9 @@ def handle_command(text, chat_id):
         send_telegram("Botti toimii 👍", chat_id)
         return
 
-
     # /games
     # /games
     if c == "/games":
-
         date_str = nhl_effective_date()
         games = nhl_schedule(date_str)
 
@@ -767,83 +785,81 @@ def handle_command(text, chat_id):
             send_telegram("Ei pelejä tänään.", chat_id)
             return
 
-        lines = ["🏒 NHL pelit:\n"]
+        # Lähetetään alkuotsikko erikseen
+        send_telegram("🏒 NHL pelit:\n", chat_id)
 
         for g in games:
-
             game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
             if not game_pk:
                 continue
 
-            # Hae play-by-play
             try:
                 pbp = nhl_play_by_play(int(game_pk))
                 goals = extract_goals(pbp)
-            except:
+            except Exception:
                 goals = []
 
-            # Muotoile koko otteluraportti
             out = format_game_output(g, goals)
-            lines.append(out)
-            lines.append("")  # tyhjä rivi väliin
 
-        send_telegram("\n".join(lines), chat_id)
+            # lähetä jokainen peli omana viestinään
+            send_telegram(out, chat_id)
+            time.sleep(0.3)  # kevyt tauko floodin välttämiseksi
+
         return
 
-
     # /players
-    if c.startswith("/players"):
-
+    if c.startswith("/player"):
         parts = text.split(" ", 1)
-
         if len(parts) < 2:
-            send_telegram("Käyttö: /players nimi", chat_id)
+            send_telegram("Käyttö: /player nimi", chat_id)
             return
 
-        name = parts[1]
-
-        players = search_player(name)
+        query = parts[1]
+        players = search_players_full(query)
 
         if not players:
             send_telegram("Pelaajaa ei löytynyt.", chat_id)
             return
 
-        lines = ["🔎 Pelaajahaku:\n"]
+        # Jos monta → näytä lista
+        if len(players) > 1:
+            lines = ["🔎 Löytyi useita pelaajia:\n"]
+            for i, p in enumerate(players[:10], 1):
+                lines.append(f"{i}. {p['name']} ({p['team']})")
+            lines.append("\nTarkenna hakua.")
+            send_telegram("\n".join(lines), chat_id)
+            return
 
-        for p in players[:10]:
-            lines.append(f"{p['name']} ({p['team']})")
-
-        send_telegram("\n".join(lines), chat_id)
+        # Yksi pelaaja → näytä statsit
+        p = players[0]
+        msg = (
+            f"🏒 {p['name']} ({p['team']})\n\n"
+            f"📊 Ottelut: {p['gp']}\n"
+            f"🥅 Maalit: {p['g']}\n"
+            f"🎯 Syötöt: {p['a']}\n"
+            f"🔥 Pisteet: {p['p']}\n"
+            f"➕/➖: {p['pm']}\n"
+            f"⛔ Jäähyt: {p['pim']}\n"
+        )
+        send_telegram(msg, chat_id)
         return
-
 
     # /standings
     if c == "/standings":
-
         divs = nhl_standings()
-
         if not divs:
             send_telegram("Standings-tietoja ei saatu.", chat_id)
             return
 
         lines = ["🏆 NHL Divisioonat\n"]
-
         for div_name, teams in divs.items():
-
             lines.append(f"📍 {div_name}:")
-
-            # teams = [(team, pts, w, l, ot), ...]
             teams_sorted = sorted(teams, key=lambda x: -x[1])
-
             for i, (team, pts, w, l, ot) in enumerate(teams_sorted, start=1):
                 games = w + l + ot
                 p_pct = (pts / (games * 2)) if games > 0 else 0.0
                 star = "⭐ " if i <= 3 else ""   # Top-3 merkintä
-
-                lines.append(
-                    f"{i}. {star}{team} — {pts}p ({w}-{l}-{ot}) | P% {p_pct*100:.1f}%"
-                )
-
+                lines.append(f"{i}. {star}{team} — {pts}p ({w}-{l}-{ot}) | P% {p_pct*100:.1f}%")
             lines.append("")  # tyhjä rivi divisioonien väliin
 
         send_telegram("\n".join(lines), chat_id)
@@ -851,58 +867,76 @@ def handle_command(text, chat_id):
 
     # /suomalaiset
     if c == "/suomalaiset":
-
         date_str = nhl_effective_date()
-        result = get_finnish_points(date_str)
+        games = nhl_schedule(date_str)
 
-        # Taaksepäin yhteensopivuus jos vanha versio palauttaa vain stats
-        if isinstance(result, tuple) and len(result) == 2:
-            stats, name_map = result
-        else:
-            stats, name_map = result, {}
+        finnish_names = [
+            "Aho", "Rantanen", "Barkov", "Laine", "Hintz", "Lindell", "Heiskanen",
+            "Kakko", "Armia", "Teräväinen", "Lehkonen", "Haula", "Lundell", "Helenius",
+            "Koivunen", "Nyman", "Hyry", "Hämeenaho", "Vaakanainen", "Matinpalo", "Lambert",
+            "Pärssinen", "Luukkonen", "Ristolainen", "Heponiemi", "Björninen",
+            "Tolvanen", "Granlund", "Luostarinen", "Maccelli", "Määttä", "Kotkaniemi",
+            "Saros", "Räty", "Kapanen", "Kiviranta", "Jokiharju", "Mikkola",
+        ]
+        finnish_points = {}  # "Pelaaja" -> g,a
 
-        if not stats:
+        for g in games:
+            game_pk = g.get("id") or g.get("gamePk") or g.get("gameId")
+            if not game_pk:
+                continue
+
+            try:
+                pbp = nhl_play_by_play(int(game_pk))
+                goals = extract_goals(pbp)
+            except:
+                continue
+
+            # Käytetään samaa funktiota kuin /games
+            pts = calculate_points(goals)
+
+            # Käydään jokaisen pelaajan pisteet läpi
+            for pid, res in pts.items():
+                name = get_player_name(pid)
+
+                # Suomalaisen tunnistus nimen perusteella
+                if any(suomi in name for suomi in finnish_names):
+                    gnum = res["g"]
+                    anum = res["a"]
+                    if name not in finnish_points:
+                        finnish_points[name] = {"g": 0, "a": 0}
+                    finnish_points[name]["g"] += gnum
+                    finnish_points[name]["a"] += anum
+
+        if not finnish_points:
             send_telegram("Ei suomalaispisteitä viime yön peleissä.", chat_id)
             return
 
-        # Järjestä pisteiden mukaan
-        ordered = sorted(
-            ((pid, v["g"], v["a"], v["g"] + v["a"]) for pid, v in stats.items()),
-            key=lambda x: (-x[3], -x[1], name_map.get(x[0], FINNISH_PLAYERS.get(x[0], str(x[0]))))
-        )
-
+        # Järjestetään pistemäärän mukaan
         lines = ["🇫🇮 Suomalaisten pisteet viime yön NHL-peleissä:\n"]
-        for pid, g, a, p in ordered:
-            name = name_map.get(pid) or FINNISH_PLAYERS.get(pid, f"Pelaaja {pid}")
-            lines.append(f"• {name}: {g}+{a}={p}")
+        sorted_finns = sorted(finnish_points.items(), key=lambda x: -(x[1]["g"] + x[1]["a"]))
+        for name, res in sorted_finns:
+            g = res["g"]
+            a = res["a"]
+            lines.append(f"• {name}: {g}+{a}={g+a}")
 
         send_telegram("\n".join(lines), chat_id)
         return
-        
+    
     # /top30
     if c == "/top30":
-
         players = nhl_player_stats()
-
         if not players:
             send_telegram("Tilastoja ei saatu.", chat_id)
             return
 
         lines = ["🏒 NHL TOP30 pistemiehet\n"]
-
         for i, p in enumerate(players, 1):
-
-            lines.append(
-                f"{i}. {p['name']} ({p['team']}) "
-                f"{p['gp']} {p['g']}+{p['a']}={p['p']}"
-            )
-
+            lines.append(f"{i}. {p['name']} ({p['team']}) {p['gp']} {p['g']}+{p['a']}={p['p']}")
         send_telegram("\n".join(lines), chat_id)
         return
 
     # /suomipisteet
     if c == "/suomipisteet":
-
         now = now_local()
         yr = now.year
 
@@ -912,7 +946,6 @@ def handle_command(text, chat_id):
             season = f"{yr}{yr+1}"
 
         url = "https://api.nhle.com/stats/rest/en/skater/summary"
-
         params = {
             "isAggregate": "false",
             "isGame": "false",
@@ -924,7 +957,6 @@ def handle_command(text, chat_id):
 
         r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
-
         data = r.json().get("data", [])
 
         if not data:
@@ -932,19 +964,15 @@ def handle_command(text, chat_id):
             return
 
         lines = ["🇫🇮 Suomalaisten NHL pistepörssi\n"]
-
         for i, p in enumerate(data, 1):
             lines.append(
                 f"{i}. {p.get('skaterFullName','')} ({p.get('teamAbbrevs','')}) "
                 f"{p.get('gamesPlayed',0)} {p.get('goals',0)}+{p.get('assists',0)}={p.get('points',0)}"
             )
-
         send_telegram("\n".join(lines), chat_id)
         return
-      
-    
 
-    # unknown command
+    # tuntematon komento
     send_telegram(
         "Tuntematon komento.\n"
         "Komennot:\n"
@@ -993,13 +1021,27 @@ def poll_commands(state):
 
     state["tg_offset"] = maxid + 1
 
+# ---------------------------------------------------------------------------
+# STARTUP SAFETY: DISABLE WEBHOOK (if set) TO ENABLE getUpdates POLLING
+# ---------------------------------------------------------------------------
+def _ensure_no_webhook():
+    if not TOKEN:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/deleteWebhook"
+        SESSION.post(url, data={"drop_pending_updates": True}, timeout=HTTP_TIMEOUT)
+        logging.info("Telegram webhook disabled (if it was set).")
+    except Exception as e:
+        logging.warning(f"deleteWebhook error: {e}")
 
 # ---------------------------------------------------------------------------
 # MAIN LOOP
 # ---------------------------------------------------------------------------
 def main():
     init_db()
+    _ensure_no_webhook()  # tärkeä, jotta getUpdates toimii varmasti
     logging.info("NHL Modern Bot is running...")
+    logging.info(f"TOKEN OK: {bool(TOKEN)} | CHAT_ID set: {bool(CHAT_ID)} | ENABLE_COMMANDS: {ENABLE_COMMANDS}")
 
     last_rss = 0
     last_tw = 0
@@ -1009,7 +1051,6 @@ def main():
 
     while True:
         now_ts = time.time()
-
         try:
             # Commands
             if now_ts - last_cmd >= UPDATES_POLL_SECONDS:
@@ -1031,7 +1072,6 @@ def main():
         except Exception as e:
             logging.warning(f"Main loop error: {e}")
             time.sleep(5)
-
 
 # ---------------------------------------------------------------------------
 # ENTRYPOINT
